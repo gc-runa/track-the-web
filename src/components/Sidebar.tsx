@@ -9,14 +9,14 @@ const TYPE_ORDER: EntityType[] = [
   "supplier",
   "product",
   "market",
-  "segment",
-  "technology",
   "person",
   "partnership",
+  "technology",
   "channel",
   "location",
   "regulation",
   "risk",
+  "segment",
   "other",
 ];
 
@@ -39,9 +39,9 @@ export function Sidebar({
   })).filter((g) => g.items.length > 0);
 
   return (
-    <aside className="side-panel terminal-side">
-      <div className="panel-head terminal-head">
-        <h2>REPO</h2>
+    <aside className="side-panel">
+      <div className="panel-head">
+        <h2>Library</h2>
         <span>{entities.length}</span>
       </div>
 
@@ -51,20 +51,22 @@ export function Sidebar({
           className={view === "map" ? "active" : ""}
           onClick={() => onViewChange("map")}
         >
-          MAP
+          Map
         </button>
         <button
           type="button"
           className={view === "page" ? "active" : ""}
           onClick={() => onViewChange("page")}
         >
-          PAGE
+          Pages
         </button>
       </div>
 
       <div className="side-scroll">
         {grouped.length === 0 && (
-          <p className="muted pad">Repository empty — agents writing…</p>
+          <p className="muted pad">
+            Entities appear here as agents write the repository.
+          </p>
         )}
         {grouped.map((group) => (
           <div key={group.type} className="side-group">
@@ -83,11 +85,7 @@ export function Sidebar({
                 }}
               >
                 <span className="side-item-name">{e.name}</span>
-                <span className="side-item-sum">
-                  {(e.sourceRecords?.length ?? 0) > 0
-                    ? `${e.sourceRecords.length} src · ${e.summary}`
-                    : e.summary}
-                </span>
+                <span className="side-item-sum">{e.summary}</span>
               </button>
             ))}
           </div>

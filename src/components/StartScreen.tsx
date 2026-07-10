@@ -9,7 +9,7 @@ export function StartScreen() {
   const { start } = useSwarm();
   const [company, setCompany] = useState("");
   const [task, setTask] = useState(
-    "Build the deepest source-grounded map of the full ecosystem.",
+    "Map the full ecosystem with source-backed detail.",
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,46 +28,46 @@ export function StartScreen() {
   }
 
   return (
-    <div className="start-shell terminal-start">
-      <div className="start-atmosphere" aria-hidden />
+    <div className="start-shell">
+      <div className="start-visual" aria-hidden>
+        <div className="start-grid" />
+        <div className="start-glow" />
+        <div className="start-orbit" />
+      </div>
+
       <main className="start-main">
         <p className="brand-mark">Track the Web</p>
-        <h1>Self-building world repository</h1>
+        <h1>Watch the world map itself.</h1>
         <p className="lede">
-          Bloomberg-style terminal. Free web search + Hy3 agents sprawl forever:
-          every new company gets a full dossier — products, customers, debt,
-          equity, relationships — saved to Render Postgres.
+          Enter a company. Agents search, cite sources, and build a living map —
+          forever.
         </p>
 
         <form className="start-form" onSubmit={onSubmit}>
-          <label>
-            Company
+          <label className="field">
+            <span>Company</span>
             <input
               value={company}
               onChange={(e) => setCompany(e.target.value)}
-              placeholder="e.g. Stripe, NVIDIA, Siemens"
+              placeholder="NVIDIA, Stripe, Siemens…"
               required
               autoFocus
             />
           </label>
-          <label>
-            Mission
+          <label className="field">
+            <span>Mission</span>
             <textarea
               value={task}
               onChange={(e) => setTask(e.target.value)}
-              rows={4}
+              rows={3}
               required
             />
           </label>
           {error && <p className="form-error">{error}</p>}
           <button type="submit" disabled={loading || !company.trim()}>
-            {loading ? "Opening terminal…" : "Open terminal & start swarm"}
+            {loading ? "Starting…" : "Start mapping"}
           </button>
         </form>
-
-        <p className="fineprint">
-          OpenRouter · tencent/hy3:free · source-grounded · never idles
-        </p>
       </main>
     </div>
   );

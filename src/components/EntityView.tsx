@@ -4,18 +4,14 @@ import type { Entity, Relation, Source } from "@/lib/types";
 
 function SourceList({ sources }: { sources: Source[] }) {
   if (!sources.length) {
-    return (
-      <p className="muted">
-        No structured sources yet — marked for verification.
-      </p>
-    );
+    return <p className="muted">No sources yet — still verifying.</p>;
   }
   return (
     <ul className="source-list">
       {sources.map((s) => (
         <li key={s.id} className={`source-item kind-${s.kind}`}>
           <div className="source-top">
-            <span className="source-kind">{s.kind}</span>
+            <span className="source-kind">{s.kind.replace(/_/g, " ")}</span>
             <span className="source-conf">
               {(s.confidence * 100).toFixed(0)}%
             </span>
@@ -24,11 +20,16 @@ function SourceList({ sources }: { sources: Source[] }) {
           <div className="source-pub">{s.publisher}</div>
           <p className="source-excerpt">{s.excerpt}</p>
           {s.url ? (
-            <a href={s.url} target="_blank" rel="noreferrer" className="source-url">
-              {s.url}
+            <a
+              href={s.url}
+              target="_blank"
+              rel="noreferrer"
+              className="source-url"
+            >
+              Open source
             </a>
           ) : (
-            <span className="source-nourl">No URL (not invented)</span>
+            <span className="source-nourl">No URL provided</span>
           )}
         </li>
       ))}
@@ -50,8 +51,8 @@ export function EntityView({
   if (!entity) {
     return (
       <div className="entity-empty">
-        <h2>REPOSITORY PAGE</h2>
-        <p>Select an entity from the map or sidebar. Sources stream in live.</p>
+        <h2>Select a page</h2>
+        <p>Pick something from the library, map, or search.</p>
       </div>
     );
   }
@@ -63,16 +64,15 @@ export function EntityView({
   const records = entity.sourceRecords || [];
 
   return (
-    <article className="entity-page terminal-page">
+    <article className="entity-page">
       <div className="entity-kicker">{entity.type}</div>
       <h1 className="entity-title">{entity.name}</h1>
       <p className="entity-summary">{entity.summary}</p>
 
       <div className="entity-meta">
-        <span>CONF {(entity.confidence * 100).toFixed(0)}%</span>
-        <span>UPD {new Date(entity.updatedAt).toLocaleTimeString()}</span>
-        <span>AGT {entity.agentId}</span>
-        <span>SRC {records.length}</span>
+        <span>{(entity.confidence * 100).toFixed(0)}% confidence</span>
+        <span>{records.length} sources</span>
+        <span>Updated {new Date(entity.updatedAt).toLocaleTimeString()}</span>
       </div>
 
       {entity.tags.length > 0 && (
@@ -86,14 +86,14 @@ export function EntityView({
       )}
 
       <section className="entity-section">
-        <h3>SOURCE DATA</h3>
+        <h3>Sources</h3>
         <SourceList sources={records} />
       </section>
 
       <section className="entity-section">
-        <h3>NOTES</h3>
+        <h3>Notes</h3>
         {entity.details.length === 0 ? (
-          <p className="muted">Agents still expanding this page.</p>
+          <p className="muted">More detail will land as agents expand this page.</p>
         ) : (
           <ul>
             {entity.details.map((d) => (
@@ -104,7 +104,7 @@ export function EntityView({
       </section>
 
       <section className="entity-section">
-        <h3>CONNECTIONS</h3>
+        <h3>Connections</h3>
         {linked.length === 0 ? (
           <p className="muted">No links yet.</p>
         ) : (
@@ -120,11 +120,6 @@ export function EntityView({
                     <span className="link-name">{other.name}</span>
                     <span className="link-type">{other.type}</span>
                   </button>
-                  {r.sources?.[0] && (
-                    <div className="link-src">
-                      via {r.sources[0].publisher}: {r.sources[0].title}
-                    </div>
-                  )}
                 </li>
               );
             })}

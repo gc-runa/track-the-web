@@ -4,13 +4,13 @@ import { useEffect, useRef } from "react";
 import type { LogEntry, ResearchTask } from "@/lib/types";
 
 const LEVEL: Record<LogEntry["level"], string> = {
-  info: "INF",
-  spawn: "SPN",
-  find: "FND",
-  error: "ERR",
-  warn: "WRN",
-  system: "SYS",
-  source: "SRC",
+  info: "Info",
+  spawn: "Spawn",
+  find: "Find",
+  error: "Error",
+  warn: "Warn",
+  system: "System",
+  source: "Source",
 };
 
 export function Tape({
@@ -41,20 +41,18 @@ export function Tape({
 
   return (
     <aside className="tape-panel">
-      <div className="panel-head terminal-head">
-        <h2>TAPE</h2>
-        <span>{filtered.length} ticks</span>
+      <div className="panel-head">
+        <h2>Activity</h2>
+        <span>{filtered.length}</span>
       </div>
 
       {selectedTask && (
         <div className="agent-inspect">
-          <div className="inspect-id">{selectedTask.id}</div>
-          <div className="inspect-phase">{selectedTask.phase}</div>
+          <div className="inspect-phase">
+            {selectedTask.phase.replace(/_/g, " ")}
+          </div>
           <p className="inspect-focus">{selectedTask.focus}</p>
           <p className="inspect-activity">{selectedTask.activity}</p>
-          {selectedTask.lastNarrative && (
-            <p className="inspect-narrative">{selectedTask.lastNarrative}</p>
-          )}
         </div>
       )}
 
@@ -68,19 +66,22 @@ export function Tape({
             el.scrollHeight - el.scrollTop - el.clientHeight < 64;
         }}
       >
+        {filtered.length === 0 && (
+          <p className="muted pad">Activity will stream here.</p>
+        )}
         {filtered.map((log) => (
           <div key={log.id} className={`tape-row lvl-${log.level}`}>
-            <span className="tape-time">
-              {new Date(log.ts).toLocaleTimeString("en-US", {
-                hour12: false,
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              })}
-            </span>
-            <span className="tape-lvl">{LEVEL[log.level]}</span>
-            <span className="tape-agent">{log.agentId.replace("agent_", "")}</span>
-            <span className="tape-msg">{log.message}</span>
+            <div className="tape-meta">
+              <span className="tape-time">
+                {new Date(log.ts).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </span>
+              <span className="tape-lvl">{LEVEL[log.level]}</span>
+            </div>
+            <p className="tape-msg">{log.message}</p>
           </div>
         ))}
         <div ref={bottomRef} />

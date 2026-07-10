@@ -14,18 +14,20 @@ export function RepoSearch({
   const [results, setResults] = useState<Entity[]>([]);
   const [busy, setBusy] = useState(false);
   const [meta, setMeta] = useState("");
+  const [searched, setSearched] = useState(false);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!q.trim()) return;
     setBusy(true);
+    setSearched(true);
     try {
       const res = await fetch(
         `/api/research/search?q=${encodeURIComponent(q.trim())}&sessionId=${encodeURIComponent(sessionId)}`,
       );
       const data = await res.json();
       setResults((data.entities || []) as Entity[]);
-      setMeta(`${data.count ?? 0} hits · ${data.source}`);
+      setMeta(`${data.count ?? 0} results`);
     } finally {
       setBusy(false);
     }
@@ -37,14 +39,18 @@ export function RepoSearch({
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search forever repository…"
+          placeholder="Search companies, products, people…"
           aria-label="Search repository"
+          autoFocus
         />
         <button type="submit" disabled={busy}>
-          {busy ? "…" : "SEARCH"}
+          {busy ? "Searching…" : "Search"}
         </button>
       </form>
       {meta && <div className="repo-search-meta">{meta}</div>}
+      {searched && results.length === 0 && !busy && (
+        <p className="muted pad">No matches yet. Keep the swarm running.</p>
+      )}
       {results.length > 0 && (
         <div className="repo-search-results">
           {results.map((e) => (

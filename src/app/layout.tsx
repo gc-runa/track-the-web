@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Fraunces, Source_Sans_3, JetBrains_Mono } from "next/font/google";
+import { Fraunces, DM_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
 const display = Fraunces({
@@ -8,7 +8,7 @@ const display = Fraunces({
   weight: ["500", "600", "700"],
 });
 
-const sans = Source_Sans_3({
+const sans = DM_Sans({
   variable: "--font-sans",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
@@ -23,7 +23,7 @@ const mono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Track the Web",
   description:
-    "Indefinite Hy3 agent swarm that maps suppliers, customers, competitors, products, and markets in realtime.",
+    "Self-building world repository — live agent swarm mapping companies, markets, and sources.",
 };
 
 export default function RootLayout({

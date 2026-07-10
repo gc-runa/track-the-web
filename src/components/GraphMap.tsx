@@ -4,21 +4,21 @@ import { useMemo, useRef, useEffect } from "react";
 import type { Entity, Relation } from "@/lib/types";
 
 const TYPE_COLOR: Record<string, string> = {
-  company: "#1f4b3a",
-  supplier: "#3d6b58",
-  customer: "#2a5f7a",
-  competitor: "#8b3a2a",
-  product: "#5a4a2a",
-  market: "#3a4a6b",
-  segment: "#4a5a3a",
-  technology: "#4a3a6b",
-  person: "#6b4a3a",
-  location: "#2a5a4a",
-  regulation: "#5a3a4a",
-  partnership: "#3a5a6b",
-  channel: "#5a5a2a",
-  risk: "#7a2a2a",
-  other: "#555555",
+  company: "#d4a24c",
+  supplier: "#3ecf8e",
+  customer: "#5eb8c8",
+  competitor: "#ff6b5a",
+  product: "#c4a574",
+  market: "#7eb6d8",
+  segment: "#8fa399",
+  technology: "#9b8fd4",
+  person: "#e0a882",
+  location: "#5a9e86",
+  regulation: "#c97b8a",
+  partnership: "#6bb3c4",
+  channel: "#b8a45a",
+  risk: "#e07060",
+  other: "#6b7a72",
 };
 
 export function GraphMap({
@@ -247,7 +247,10 @@ export function GraphMap({
     <div className="graph-shell">
       <canvas ref={canvasRef} className="graph-canvas" />
       {nodes.length === 0 && (
-        <div className="graph-empty">Map will appear as agents find entities…</div>
+        <div className="graph-empty">
+          <h2>Map is forming</h2>
+          <p>Companies and links appear here as agents write the repository.</p>
+        </div>
       )}
     </div>
   );

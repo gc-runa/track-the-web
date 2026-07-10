@@ -9,19 +9,21 @@ function elapsed(task: ResearchTask, now: number) {
   const s = Math.max(0, Math.floor((end - start) / 1000));
   const m = Math.floor(s / 60);
   const r = s % 60;
-  return m > 0 ? `${m}:${String(r).padStart(2, "0")}` : `0:${String(r).padStart(2, "0")}`;
+  return m > 0
+    ? `${m}:${String(r).padStart(2, "0")}`
+    : `0:${String(r).padStart(2, "0")}`;
 }
 
 const PHASE_LABEL: Record<string, string> = {
-  queued: "QUEUED",
-  briefing: "BRIEF",
-  searching_web: "WEB",
-  calling_hy3: "HY3",
-  parsing: "PARSE",
-  writing_map: "WRITE",
-  spawning: "SPAWN",
-  done: "DONE",
-  failed: "FAIL",
+  queued: "Queued",
+  briefing: "Briefing",
+  searching_web: "Searching",
+  calling_hy3: "Thinking",
+  parsing: "Parsing",
+  writing_map: "Writing",
+  spawning: "Spawning",
+  done: "Done",
+  failed: "Failed",
 };
 
 export function AgentBoard({
@@ -40,20 +42,25 @@ export function AgentBoard({
   }, []);
 
   const running = tasks.filter((t) => t.status === "running");
-  const queued = tasks.filter((t) => t.status === "queued").slice(0, 24);
+  const queued = tasks.filter((t) => t.status === "queued").slice(0, 18);
   const recent = tasks
     .filter((t) => t.status === "done" || t.status === "failed")
-    .slice(0, 12);
+    .slice(0, 10);
 
   return (
     <div className="agent-board">
-      <div className="board-section">
+      <div className="pane-intro">
+        <h2>Live agents</h2>
+        <p>Each worker searches the web, cites sources, then forks the next leads.</p>
+      </div>
+
+      <section className="board-section">
         <div className="board-label">
-          LIVE AGENTS <span>{running.length}</span>
+          Working now <span>{running.length}</span>
         </div>
         <div className="agent-grid">
           {running.length === 0 && (
-            <div className="agent-empty">Awaiting Hy3 workers…</div>
+            <div className="agent-empty">Waiting for the next worker…</div>
           )}
           {running.map((t) => (
             <button
@@ -68,22 +75,21 @@ export function AgentBoard({
                 </span>
                 <span className="agent-time">{elapsed(t, now)}</span>
               </div>
-              <div className="agent-id">{t.id}</div>
               <div className="agent-focus">{t.focus}</div>
               <div className="agent-activity">{t.activity}</div>
               <div className="agent-card-foot">
-                <span>d{t.depth}</span>
-                <span>finds {t.findsCount}</span>
-                <span>spawn {t.spawnCount}</span>
+                <span>Depth {t.depth}</span>
+                <span>{t.findsCount} finds</span>
+                <span>{t.spawnCount} children</span>
               </div>
             </button>
           ))}
         </div>
-      </div>
+      </section>
 
-      <div className="board-section">
+      <section className="board-section">
         <div className="board-label">
-          QUEUE <span>{queued.length}+</span>
+          Up next <span>{queued.length}</span>
         </div>
         <div className="queue-list">
           {queued.map((t) => (
@@ -93,35 +99,35 @@ export function AgentBoard({
               className={`queue-row ${selectedId === t.id ? "active" : ""}`}
               onClick={() => onSelect(t.id)}
             >
-              <span className="q-pri">P{t.priority}</span>
-              <span className="q-id">{t.id}</span>
+              <span className="q-pri">{t.priority}</span>
               <span className="q-focus">{t.focus}</span>
             </button>
           ))}
         </div>
-      </div>
+      </section>
 
-      <div className="board-section">
-        <div className="board-label">RECENT</div>
-        <div className="queue-list">
-          {recent.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`queue-row done ${selectedId === t.id ? "active" : ""}`}
-              onClick={() => onSelect(t.id)}
-            >
-              <span className={`phase phase-${t.phase}`}>
-                {PHASE_LABEL[t.phase]}
-              </span>
-              <span className="q-id">{t.id}</span>
-              <span className="q-focus">
-                {t.lastNarrative || t.activity || t.focus}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+      {recent.length > 0 && (
+        <section className="board-section">
+          <div className="board-label">Recently finished</div>
+          <div className="queue-list">
+            {recent.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`queue-row done ${selectedId === t.id ? "active" : ""}`}
+                onClick={() => onSelect(t.id)}
+              >
+                <span className={`phase phase-${t.phase}`}>
+                  {PHASE_LABEL[t.phase]}
+                </span>
+                <span className="q-focus">
+                  {t.lastNarrative || t.activity || t.focus}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

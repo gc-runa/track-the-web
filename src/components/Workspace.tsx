@@ -11,7 +11,14 @@ import { Sidebar } from "@/components/Sidebar";
 import { StatsBar } from "@/components/StatsBar";
 import { Tape } from "@/components/Tape";
 
-type View = "agents" | "map" | "page" | "search";
+type View = "map" | "agents" | "page" | "search";
+
+const NAV: Array<{ id: View; label: string; hint: string }> = [
+  { id: "map", label: "Map", hint: "Visual network" },
+  { id: "agents", label: "Agents", hint: "Live work" },
+  { id: "page", label: "Page", hint: "Entity detail" },
+  { id: "search", label: "Search", hint: "Find anything" },
+];
 
 export function Workspace({ sessionId }: { sessionId: string }) {
   const router = useRouter();
@@ -28,7 +35,8 @@ export function Workspace({ sessionId }: { sessionId: string }) {
   } = useSwarm(sessionId);
   const [selectedEntityId, setSelectedEntityId] = useState<string>();
   const [selectedAgentId, setSelectedAgentId] = useState<string>();
-  const [view, setView] = useState<View>("agents");
+  const [view, setView] = useState<View>("map");
+  const [tapeOpen, setTapeOpen] = useState(true);
 
   const selectedEntity = useMemo(
     () => entities.find((e) => e.id === selectedEntityId),
@@ -50,7 +58,7 @@ export function Workspace({ sessionId }: { sessionId: string }) {
   }, [tasks, selectedAgentId]);
 
   return (
-    <div className="workspace terminal-workspace">
+    <div className="workspace">
       <StatsBar
         company={session?.company || "…"}
         task={session?.task || "…"}
@@ -63,38 +71,28 @@ export function Workspace({ sessionId }: { sessionId: string }) {
       />
       {error && <div className="banner">{error}</div>}
 
-      <div className="view-tabs">
+      <nav className="view-tabs" aria-label="Workspace">
+        {NAV.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={view === item.id ? "active" : ""}
+            onClick={() => setView(item.id)}
+          >
+            <span className="tab-label">{item.label}</span>
+            <span className="tab-hint">{item.hint}</span>
+          </button>
+        ))}
         <button
           type="button"
-          className={view === "agents" ? "active" : ""}
-          onClick={() => setView("agents")}
+          className={`tape-toggle ${tapeOpen ? "on" : ""}`}
+          onClick={() => setTapeOpen((v) => !v)}
         >
-          AGENTS
+          {tapeOpen ? "Hide log" : "Show log"}
         </button>
-        <button
-          type="button"
-          className={view === "map" ? "active" : ""}
-          onClick={() => setView("map")}
-        >
-          MAP
-        </button>
-        <button
-          type="button"
-          className={view === "page" ? "active" : ""}
-          onClick={() => setView("page")}
-        >
-          PAGE
-        </button>
-        <button
-          type="button"
-          className={view === "search" ? "active" : ""}
-          onClick={() => setView("search")}
-        >
-          SEARCH
-        </button>
-      </div>
+      </nav>
 
-      <div className="workspace-body terminal-body">
+      <div className={`workspace-body ${tapeOpen ? "with-tape" : "no-tape"}`}>
         <Sidebar
           entities={entities}
           selectedId={selectedEntityId}
@@ -106,14 +104,7 @@ export function Workspace({ sessionId }: { sessionId: string }) {
           onViewChange={(v) => setView(v === "map" ? "map" : "page")}
         />
 
-        <main className="main-pane">
-          {view === "agents" && (
-            <AgentBoard
-              tasks={tasks}
-              selectedId={selectedAgentId}
-              onSelect={setSelectedAgentId}
-            />
-          )}
+        <main className="main-pane" key={view}>
           {view === "map" && (
             <GraphMap
               entities={entities}
@@ -123,6 +114,13 @@ export function Workspace({ sessionId }: { sessionId: string }) {
                 setSelectedEntityId(id);
                 setView("page");
               }}
+            />
+          )}
+          {view === "agents" && (
+            <AgentBoard
+              tasks={tasks}
+              selectedId={selectedAgentId}
+              onSelect={setSelectedAgentId}
             />
           )}
           {view === "page" && (
@@ -135,6 +133,10 @@ export function Workspace({ sessionId }: { sessionId: string }) {
           )}
           {view === "search" && (
             <div className="search-pane">
+              <div className="pane-intro">
+                <h2>Search repository</h2>
+                <p>Find companies, products, people, and sources already mapped.</p>
+              </div>
               <RepoSearch
                 sessionId={sessionId}
                 onSelect={(e) => {
@@ -146,11 +148,13 @@ export function Workspace({ sessionId }: { sessionId: string }) {
           )}
         </main>
 
-        <Tape
-          logs={logs}
-          selectedAgentId={selectedAgentId}
-          selectedTask={selectedTask}
-        />
+        {tapeOpen && (
+          <Tape
+            logs={logs}
+            selectedAgentId={selectedAgentId}
+            selectedTask={selectedTask}
+          />
+        )}
       </div>
     </div>
   );
