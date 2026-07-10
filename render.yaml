@@ -29,8 +29,10 @@ services:
         sync: false
       - key: OPENROUTER_MODEL
         value: tencent/hy3:free
+      - key: OPENROUTER_WEB_SEARCH
+        value: "true"
       - key: SWARM_MAX_CONCURRENT
-        value: "6"
+        value: "32"
       - key: SWARM_MIN_RUNTIME_MS
         value: "3600000"
       - key: NEXT_PUBLIC_APP_URL

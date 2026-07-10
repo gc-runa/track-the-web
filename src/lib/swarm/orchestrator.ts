@@ -1,4 +1,4 @@
-import { chatCompletion, parseAgentFinding } from "../openrouter";
+import { chatCompletion, parseAgentFinding, HY3_MODEL } from "../openrouter";
 import {
   getRunner,
   KnowledgeSession,
@@ -10,17 +10,20 @@ import {
   companyDeepDiveSeeds,
   shouldDeepDiveType,
 } from "./deepdive";
-import { formatSearchBrief, freeWebSearch } from "../websearch";
-import { scoreSource } from "../websearch";
+import { formatSearchBrief, freeWebSearch, scoreSource } from "../websearch";
 
-const DEFAULT_CONCURRENCY = 10;
-const MAX_QUEUE = 1_000_000;
-const MAX_DEPTH = 64;
-const FOLLOWUPS_PER_AGENT = 12;
+/** Parallel OpenRouter Hy3 workers. Queue can grow without bound (capped). */
+const DEFAULT_CONCURRENCY = 32;
+const MAX_CONCURRENCY_CAP = 128;
+const MAX_QUEUE = 5_000_000;
+const MAX_DEPTH = 128;
+const FOLLOWUPS_PER_AGENT = 20;
 
 function concurrency() {
   const n = Number(process.env.SWARM_MAX_CONCURRENT || DEFAULT_CONCURRENCY);
-  return Number.isFinite(n) && n > 0 ? Math.min(48, Math.floor(n)) : DEFAULT_CONCURRENCY;
+  return Number.isFinite(n) && n > 0
+    ? Math.min(MAX_CONCURRENCY_CAP, Math.floor(n))
+    : DEFAULT_CONCURRENCY;
 }
 
 function minRuntimeMs() {
@@ -44,20 +47,16 @@ export function startSwarm(company: string, task: string) {
   let stopping = false;
   let active = 0;
   const maxConcurrent = concurrency();
+  const model = process.env.OPENROUTER_MODEL || HY3_MODEL;
 
   session.setStatus("running");
   session.log(
     "system",
     "orchestrator",
-    `WORLD REPO ONLINE · ${company} · Hy3 + free web search · concurrency ${maxConcurrent} · forever sprawl`,
-    {
-      maxConcurrent,
-      model: process.env.OPENROUTER_MODEL || "tencent/hy3:free",
-      maxQueue: MAX_QUEUE,
-    },
+    `OPENROUTER SWARM · model=${model} · web+Hy3 · parallel=${maxConcurrent} · queueCap=${MAX_QUEUE}`,
+    { maxConcurrent, model, provider: "openrouter.ai" },
   );
 
-  // Root company gets the full forensic dossier immediately.
   deepDivied.add(normKey(company));
   for (const seed of seedTasks(company, task)) {
     session.enqueueTask({
@@ -76,7 +75,7 @@ export function startSwarm(company: string, task: string) {
   ) => {
     const key = normKey(name);
     if (!key || deepDivied.has(key)) return 0;
-    if (session.getStats().queued >= MAX_QUEUE - 50) return 0;
+    if (session.getStats().queued >= MAX_QUEUE - 100) return 0;
     deepDivied.add(key);
     let n = 0;
     for (const seed of companyDeepDiveSeeds(name)) {
@@ -93,7 +92,7 @@ export function startSwarm(company: string, task: string) {
     session.log(
       "spawn",
       parentId,
-      `DOSSIER cascade · ${name} · +${n} forensic agents`,
+      `DOSSIER · ${name} · +${n} OpenRouter Hy3 agents`,
       { company: name },
     );
     return n;
@@ -101,6 +100,7 @@ export function startSwarm(company: string, task: string) {
 
   const pump = () => {
     if (stopping) return;
+    // Fill the entire parallel pool every tick
     while (active < maxConcurrent) {
       const [next] = session.nextQueued(1);
       if (!next) break;
@@ -125,14 +125,14 @@ export function startSwarm(company: string, task: string) {
     session.emit("event", { type: "stats", stats: session.getStats() });
     maybeReplenish(session, deepDivied, spawnCompanyDossier);
     pump();
-  }, 3000);
+  }, 2000);
 
   const runner = {
     stop: () => {
       stopping = true;
       clearInterval(heartbeat);
       session.setStatus("stopped");
-      session.log("system", "orchestrator", "TERMINAL HALTED by operator.");
+      session.log("system", "orchestrator", "OpenRouter swarm halted.");
     },
   };
 
@@ -148,7 +148,8 @@ function maybeReplenish(
 ) {
   if (session.getStats().status !== "running") return;
   const stats = session.getStats();
-  if (stats.queued + stats.running > 0) return;
+  // Keep the parallel pool fed — replenish before the queue fully drains
+  if (stats.queued + stats.running > Math.max(8, concurrency() / 2)) return;
 
   const ents = session.snapshot().entities;
   const companies = ents.filter((e) => shouldDeepDiveType(e.type));
@@ -160,9 +161,9 @@ function maybeReplenish(
   }
   if (spawned > 0) return;
 
-  for (const e of ents.slice(0, 12)) {
+  for (const e of ents.slice(0, 20)) {
     session.enqueueTask({
-      focus: `Re-verify and expand ${e.name} (${e.type}) with fresh web evidence: relationships, financials, adjacent entities.`,
+      focus: `OpenRouter/Hy3 re-scan ${e.name} (${e.type}): fresh web evidence, relationships, financials.`,
       entityHint: e.name,
       entityTypeHint: e.type,
       priority: 6,
@@ -182,27 +183,47 @@ async function runAgent(
   session.markTaskRunning(taskId);
   session.setPhase(taskId, "briefing", `Mission: ${task.focus.slice(0, 120)}`);
 
-  const searchQ =
+  const queries = [
     task.entityHint
-      ? `${task.entityHint} ${task.focus}`.slice(0, 160)
-      : task.focus.slice(0, 160);
+      ? `${task.entityHint} ${task.focus}`.slice(0, 140)
+      : task.focus.slice(0, 140),
+    task.entityHint
+      ? `${task.entityHint} competitors customers suppliers`
+      : `${session.company} ${task.focus}`.slice(0, 140),
+    task.entityHint
+      ? `${task.entityHint} revenue debt equity filing`
+      : `${session.company} market share`,
+  ];
 
-  session.setPhase(taskId, "searching_web", `Free web search: ${searchQ.slice(0, 80)}…`);
-  session.log("info", taskId, `WEB SEARCH · ${searchQ}`);
+  session.setPhase(
+    taskId,
+    "searching_web",
+    `Free web + OpenRouter web_search · ${queries[0].slice(0, 60)}…`,
+  );
+  session.log("info", taskId, `WEB · parallel queries ×${queries.length}`);
 
-  const hits = await freeWebSearch(searchQ, 12);
+  const hitSets = await Promise.all(
+    queries.map((q) => freeWebSearch(q, 8).catch(() => [])),
+  );
+  const hits = [...hitSets.flat()]
+    .sort((a, b) => b.quality - a.quality)
+    .filter(
+      (h, i, arr) => arr.findIndex((x) => x.url === h.url) === i,
+    )
+    .slice(0, 16);
+
   const webBrief = formatSearchBrief(hits);
   session.log(
     "source",
     taskId,
-    `WEB · ${hits.length} hits · top q=${hits[0]?.quality?.toFixed(2) ?? "n/a"} · ${hits[0]?.publisher ?? "none"}`,
-    { hitCount: hits.length, top: hits.slice(0, 3).map((h) => h.url) },
+    `WEB · ${hits.length} free hits · top=${hits[0]?.publisher ?? "none"}`,
+    { hitCount: hits.length },
   );
 
   session.setPhase(
     taskId,
     "calling_hy3",
-    "Calling tencent/hy3:free with grounded web evidence…",
+    `OpenRouter · ${process.env.OPENROUTER_MODEL || HY3_MODEL} · web tool on`,
   );
 
   const content = await chatCompletion({
@@ -222,13 +243,13 @@ async function runAgent(
     ],
     temperature: 0.35,
     maxTokens: 8192,
-    reasoningEffort: task.depth === 0 ? "low" : "none",
+    reasoningEffort: "none",
+    enableWebSearch: true,
   });
 
-  session.setPhase(taskId, "parsing", "Parsing grounded JSON payload…");
+  session.setPhase(taskId, "parsing", "Parsing Hy3 JSON…");
   const finding = parseAgentFinding(content);
 
-  // Upgrade source quality using known hit URLs
   const hitByUrl = new Map(hits.map((h) => [h.url, h]));
   for (const ent of finding.entities) {
     if (!ent.sources) continue;
@@ -265,7 +286,7 @@ async function runAgent(
   session.setPhase(
     taskId,
     "writing_map",
-    `Writing ${finding.entities.length} entities into forever repository…`,
+    `Persisting ${finding.entities.length} entities to forever repo…`,
   );
 
   let finds = 0;
@@ -284,9 +305,7 @@ async function runAgent(
       agentId: taskId,
     });
     finds += 1;
-    if (!before && shouldDeepDiveType(ent.type)) {
-      newCompanies.push(ent.name);
-    }
+    if (!before && shouldDeepDiveType(ent.type)) newCompanies.push(ent.name);
     session.updateTask(taskId, {
       findsCount: finds,
       activity: `Mapped ${ent.type}: ${ent.name}`,
@@ -306,22 +325,22 @@ async function runAgent(
     });
   }
 
-  session.setPhase(taskId, "spawning", "Forking dossier cascades + child agents…");
+  session.setPhase(taskId, "spawning", "Forking parallel Hy3 children…");
 
-  const stats = session.getStats();
   let spawnCount = 0;
-
   for (const name of newCompanies) {
     spawnCount += spawnCompanyDossier(name, taskId, task.depth);
   }
 
-  if (stats.queued < MAX_QUEUE) {
-    for (const f of finding.followUps.filter((x) => x?.focus).slice(0, FOLLOWUPS_PER_AGENT)) {
+  if (session.getStats().queued < MAX_QUEUE) {
+    for (const f of finding.followUps
+      .filter((x) => x?.focus)
+      .slice(0, FOLLOWUPS_PER_AGENT)) {
       const nextDepth = task.depth + 1;
       session.enqueueTask({
         focus: f.focus,
         parentId: taskId,
-        depth: nextDepth > MAX_DEPTH ? Math.max(0, MAX_DEPTH - 4) : nextDepth,
+        depth: nextDepth > MAX_DEPTH ? Math.max(0, MAX_DEPTH - 8) : nextDepth,
         entityHint: f.entityHint,
         entityTypeHint: f.entityTypeHint,
         priority: f.priority ?? Math.max(1, 9 - Math.min(nextDepth, 8)),
@@ -329,9 +348,9 @@ async function runAgent(
       spawnCount += 1;
     }
 
-    for (const ent of finding.entities.slice(0, 5)) {
+    for (const ent of finding.entities.slice(0, 6)) {
       session.enqueueTask({
-        focus: `Expand relationships around ${ent.name}: customers, suppliers, competitors, products, debt/equity links.`,
+        focus: `Expand ${ent.name}: customers, suppliers, competitors, products, debt/equity — via OpenRouter Hy3 + web.`,
         parentId: taskId,
         depth: task.depth + 1,
         entityHint: ent.name,

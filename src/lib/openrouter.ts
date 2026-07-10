@@ -3,6 +3,8 @@ import { normalizeSourceKind } from "./knowledge/store";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
+export const HY3_MODEL = "tencent/hy3:free";
+
 export class OpenRouterError extends Error {
   constructor(
     message: string,
@@ -18,34 +20,50 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function chatCompletion(params: {
-  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
-  temperature?: number;
-  maxTokens?: number;
-  reasoningEffort?: "none" | "low" | "medium" | "high";
-}): Promise<string> {
+function modelSlug() {
+  return process.env.OPENROUTER_MODEL || HY3_MODEL;
+}
+
+function webSearchEnabled() {
+  const v = (process.env.OPENROUTER_WEB_SEARCH || "true").toLowerCase();
+  return v !== "0" && v !== "false" && v !== "off";
+}
+
+/** High-quality domains preferred when OpenRouter executes web_search. */
+const QUALITY_DOMAINS = [
+  "sec.gov",
+  "reuters.com",
+  "bloomberg.com",
+  "ft.com",
+  "wsj.com",
+  "nytimes.com",
+  "economist.com",
+  "wikipedia.org",
+  "crunchbase.com",
+  "forbes.com",
+  "nature.com",
+  "oecd.org",
+  "europa.eu",
+  "gov.uk",
+];
+
+type ChatMessage = {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
+};
+
+async function openRouterRequest(body: Record<string, unknown>) {
   const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    throw new OpenRouterError("OPENROUTER_API_KEY is missing");
-  }
+  if (!apiKey) throw new OpenRouterError("OPENROUTER_API_KEY is missing");
 
-  const model = process.env.OPENROUTER_MODEL || "tencent/hy3:free";
   const maxAttempts = 8;
-  const effort = params.reasoningEffort ?? "low";
-
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const body: Record<string, unknown> = {
-      model,
-      messages: params.messages,
-      temperature: params.temperature ?? 0.4,
-      max_tokens: params.maxTokens ?? 8192,
-    };
-
-    // Hy3 defaults to no-think; only attach reasoning when requested.
-    if (effort !== "none") {
-      body.reasoning = { effort };
-    }
-
     const res = await fetch(OPENROUTER_URL, {
       method: "POST",
       headers: {
@@ -60,7 +78,6 @@ export async function chatCompletion(params: {
 
     if (res.status === 429 || res.status >= 500) {
       const errBody = await res.text().catch(() => "");
-      const delay = Math.min(60_000, 1500 * 2 ** (attempt - 1));
       if (attempt === maxAttempts) {
         throw new OpenRouterError(
           `OpenRouter failed after retries (${res.status})`,
@@ -68,7 +85,7 @@ export async function chatCompletion(params: {
           errBody,
         );
       }
-      await sleep(delay);
+      await sleep(Math.min(60_000, 1200 * 2 ** (attempt - 1)));
       continue;
     }
 
@@ -81,29 +98,96 @@ export async function chatCompletion(params: {
       );
     }
 
-    const data = (await res.json()) as {
+    return (await res.json()) as {
       choices?: Array<{
         message?: {
           content?: string | null;
-          reasoning?: string | null;
+          tool_calls?: ChatMessage["tool_calls"];
         };
+        finish_reason?: string;
       }>;
     };
+  }
+
+  throw new OpenRouterError("Unreachable");
+}
+
+/**
+ * Call Hy3 on OpenRouter. Optionally attaches openrouter:web_search so the
+ * model can pull live web evidence during the turn. Free DuckDuckGo/Wikipedia
+ * hits should still be injected into the user prompt by the orchestrator.
+ */
+export async function chatCompletion(params: {
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  temperature?: number;
+  maxTokens?: number;
+  reasoningEffort?: "none" | "low" | "medium" | "high";
+  enableWebSearch?: boolean;
+}): Promise<string> {
+  const effort = params.reasoningEffort ?? "none";
+  const useWeb = params.enableWebSearch ?? webSearchEnabled();
+
+  const messages: ChatMessage[] = params.messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  const baseBody: Record<string, unknown> = {
+    model: modelSlug(),
+    messages,
+    temperature: params.temperature ?? 0.35,
+    max_tokens: params.maxTokens ?? 8192,
+  };
+
+  if (effort !== "none") {
+    baseBody.reasoning = { effort };
+  }
+
+  if (useWeb) {
+    baseBody.tools = [
+      {
+        type: "openrouter:web_search",
+        parameters: {
+          max_results: 5,
+          max_total_results: 12,
+          search_context_size: "low",
+          allowed_domains: QUALITY_DOMAINS,
+        },
+      },
+    ];
+    // Encourage the model to search when evidence is thin
+    baseBody.tool_choice = "auto";
+  }
+
+  try {
+    // Server tools are executed by OpenRouter; one round-trip usually returns final content.
+    const data = await openRouterRequest(baseBody);
     const message = data.choices?.[0]?.message;
     const content = message?.content?.trim();
     if (content) return content;
 
-    // Rare: reasoning consumed the budget — retry with no-think.
-    if (attempt < maxAttempts) {
-      params = { ...params, reasoningEffort: "none", maxTokens: 8192 };
-      await sleep(800 * attempt);
-      continue;
+    // If the model returned tool_calls without server-side resolution, retry without tools.
+    if (message?.tool_calls?.length) {
+      return chatCompletion({ ...params, enableWebSearch: false });
     }
-
-    throw new OpenRouterError("Empty model response");
+  } catch (err) {
+    // Tool/web path failed — fall back to plain Hy3 (still OpenRouter).
+    if (useWeb) {
+      return chatCompletion({ ...params, enableWebSearch: false });
+    }
+    throw err;
   }
 
-  throw new OpenRouterError("Unreachable");
+  // Empty content — retry once without reasoning/tools
+  if (useWeb || effort !== "none") {
+    return chatCompletion({
+      ...params,
+      enableWebSearch: false,
+      reasoningEffort: "none",
+    });
+  }
+
+  throw new OpenRouterError("Empty Hy3 response from OpenRouter");
 }
 
 export function extractJsonObject(text: string): unknown {
@@ -219,9 +303,7 @@ export function parseAgentFinding(text: string): AgentFinding {
         type: normEntityType(e.type),
         name: String(e.name).trim(),
         summary: String(e.summary || "").trim(),
-        details: Array.isArray(e.details)
-          ? e.details.map(String)
-          : undefined,
+        details: Array.isArray(e.details) ? e.details.map(String) : undefined,
         tags: Array.isArray(e.tags) ? e.tags.map(String) : undefined,
         confidence:
           typeof e.confidence === "number" ? e.confidence : undefined,
