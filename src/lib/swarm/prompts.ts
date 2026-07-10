@@ -56,22 +56,21 @@ Then spawn follow-ups so sibling agents never starve.
 ═══════════════════════════════════════
 TRUTH PROTOCOL (non-negotiable)
 ═══════════════════════════════════════
-1. Prefer WEB SEARCH HITS injected in the user prompt. Cite real URLs from those hits.
-2. You may also use OpenRouter web_search for fresher evidence.
-3. NEVER invent URLs, ticker symbols, dollar figures, dates, or named customers.
-4. If evidence is thin: kind="inference", lower confidence (≤0.45), and say what is missing in followUps.
-5. Prefer: SEC/EDGAR, IR pages, Reuters/FT/Bloomberg/WSJ, regulators, Wikipedia, OECD, company filings.
+1. EVERY claim must be grounded on WEB SEARCH HITS (or OpenRouter web_search results).
+2. EVERY entity MUST include ≥1 source with a real url copied from WEB SEARCH HITS.
+3. NEVER invent URLs, tickers, dollar figures, dates, or named customers.
+4. If you cannot ground a claim on a hit URL, OMIT the entity — do not emit inference shells.
+5. Prefer: SEC/EDGAR, IR pages, Reuters/FT/Bloomberg/WSJ, regulators, Wikipedia, OECD, filings.
 6. Deprioritize SEO spam, affiliate listicles, and unverifiable blogs.
-7. Distinguish fact vs inference explicitly in summaries when confidence < 0.6.
-8. Output ONLY valid JSON — no markdown outside JSON, no commentary.
+7. Output ONLY valid JSON — no markdown outside JSON, no commentary.
 
 ═══════════════════════════════════════
 QUALITY BAR
 ═══════════════════════════════════════
 • Named entities beat vague categories ("Microsoft" > "enterprise customers").
-• Every entity needs a crisp summary + ≥1 concrete detail when possible.
-• Relations must use exact entity names that appear in your entities array.
-• Follow-ups must open NEW frontiers (unknown customers, missing financials, unexplored geographies) — not restate the current focus.
+• Every entity needs a crisp summary + ≥1 concrete detail when evidenced.
+• Relations must use exact entity names that appear in your entities array AND cite a hit URL.
+• Follow-ups must open NEW frontiers — not restate the current focus.
 • When you name a new company/competitor/supplier/customer, include enough substance to justify a full dossier cascade.`;
 }
 
@@ -149,13 +148,12 @@ Return ONLY this JSON shape:
 }
 
 HARD REQUIREMENTS
-1. Emit 5–12 entities with sources grounded on web hits whenever possible.
-2. Emit 4–14 relations using exact names from your entities list.
-3. Emit 8–14 followUps that sprawl into every remaining unknown (named customers, suppliers, competitors, debt, equity, geographies, people).
+1. Emit 4–10 entities — EACH with ≥1 source.url copied EXACTLY from WEB SEARCH HITS above.
+2. Emit 3–10 relations using exact names from your entities list; each relation needs a hit URL.
+3. Emit 6–12 followUps that sprawl into remaining unknowns.
 4. Prefer NEW named companies over restating the root company.
-5. If the focus is financials, prioritize revenue, debt, equity, ownership, and credit with citations.
-6. If the focus is ecosystem, prioritize named customers / suppliers / competitors with relationship edges.
-7. Never invent URLs. Omit url rather than fabricate.`;
+5. If WEB SEARCH HITS is empty, emit zero entities and only followUps that propose better search queries.
+6. Never invent URLs. If a claim has no hit URL, omit it.`;
 }
 
 export function roleForTask(task: ResearchTask): string {

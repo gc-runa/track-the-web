@@ -31,10 +31,11 @@ services:
         value: tencent/hy3:free
       - key: OPENROUTER_WEB_SEARCH
         value: "true"
+      # Free plan = 512MB. Keep concurrency low; queue can still grow forever.
       - key: SWARM_MAX_CONCURRENT
-        value: "1000"
+        value: "8"
       - key: NODE_OPTIONS
-        value: "--max-old-space-size=460"
+        value: "--max-old-space-size=400"
       - key: SWARM_MIN_RUNTIME_MS
         value: "3600000"
       - key: NEXT_PUBLIC_APP_URL

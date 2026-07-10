@@ -17,16 +17,21 @@ import {
   companyDeepDiveSeeds,
   shouldDeepDiveType,
 } from "./deepdive";
-import { formatSearchBrief, freeWebSearch, scoreSource } from "../websearch";
+import { formatSearchBrief, freeWebSearch } from "../websearch";
+import { groundFindingOnWeb } from "./ground";
 import type { EntityType, ResearchTask, SessionState } from "../types";
 import { loadSessionFromDb } from "../persist";
 
-/** Parallel OpenRouter Hy3 workers. Queue can grow without bound (capped). */
-const DEFAULT_CONCURRENCY = 1000;
-const MAX_CONCURRENCY_CAP = 1000;
+/** Parallel OpenRouter Hy3 workers. Queue can grow huge; concurrency is free-tier safe. */
+const ON_RENDER = Boolean(process.env.RENDER || process.env.RENDER_SERVICE_ID);
+const DEFAULT_CONCURRENCY = ON_RENDER ? 8 : 24;
+const MAX_CONCURRENCY_CAP = ON_RENDER ? 16 : 1000;
 const MAX_QUEUE = 5_000_000;
 const MAX_DEPTH = 128;
-const FOLLOWUPS_PER_AGENT = 20;
+const FOLLOWUPS_PER_AGENT = ON_RENDER ? 8 : 16;
+const WEB_QUERIES = ON_RENDER ? 2 : 4;
+const WEB_HIT_LIMIT = ON_RENDER ? 8 : 12;
+const MAX_TOKENS = ON_RENDER ? 4096 : 8192;
 
 const resumeLocks = new Set<string>();
 
@@ -75,7 +80,7 @@ function buildQueries(session: KnowledgeSession, task: ResearchTask): string[] {
     `${hint} revenue debt equity ownership filing 10-K`,
     `${hint} CEO board executives headquarters`,
   ];
-  return [...new Set(queries.map((q) => q.slice(0, 160)))].slice(0, 4);
+  return [...new Set(queries.map((q) => q.slice(0, 160)))].slice(0, WEB_QUERIES);
 }
 
 type SpawnFn = (
@@ -299,7 +304,7 @@ function maybeReplenish(
 ) {
   if (session.getStats().status !== "running") return;
   const stats = session.getStats();
-  if (stats.queued + stats.running > Math.max(64, concurrency() * 2)) return;
+  if (stats.queued + stats.running > Math.max(ON_RENDER ? 24 : 64, concurrency() * 3)) return;
 
   const ents = session.snapshot().entities;
   const companies = ents.filter((e) => shouldDeepDiveType(e.type));
@@ -335,7 +340,7 @@ function maybeReplenish(
   }
 
   const slice = ents.length
-    ? ents.slice(0, Math.min(40, Math.max(8, ents.length)))
+    ? ents.slice(0, Math.min(ON_RENDER ? 12 : 40, Math.max(6, ents.length)))
     : [];
   if (slice.length === 0) {
     spawnCompanyDossier(root, "orchestrator-idle", 0, true);
@@ -368,7 +373,7 @@ async function runAgent(
   session.markTaskRunning(taskId);
   session.setPhase(taskId, "briefing", `${role} · ${task.focus.slice(0, 100)}`);
 
-  const queries = buildQueries(session, task);
+  let queries = buildQueries(session, task);
 
   session.setPhase(
     taskId,
@@ -377,13 +382,26 @@ async function runAgent(
   );
   session.log("info", taskId, `WEB · ${role} · queries ×${queries.length}`);
 
-  const hitSets = await Promise.all(
-    queries.map((q) => freeWebSearch(q, 8).catch(() => [])),
+  let hitSets = await Promise.all(
+    queries.map((q) => freeWebSearch(q, WEB_HIT_LIMIT).catch(() => [])),
   );
-  const hits = [...hitSets.flat()]
+  let hits = [...hitSets.flat()]
     .sort((a, b) => b.quality - a.quality)
     .filter((h, i, arr) => arr.findIndex((x) => x.url === h.url) === i)
-    .slice(0, 18);
+    .slice(0, WEB_HIT_LIMIT + 4);
+
+  // Retry with simpler queries if the first pass found nothing
+  if (!hits.length) {
+    const hint = task.entityHint || session.company;
+    queries = [`${hint} company`, `${hint} wikipedia`, `${hint} competitors`];
+    hitSets = await Promise.all(
+      queries.map((q) => freeWebSearch(q, WEB_HIT_LIMIT).catch(() => [])),
+    );
+    hits = [...hitSets.flat()]
+      .sort((a, b) => b.quality - a.quality)
+      .filter((h, i, arr) => arr.findIndex((x) => x.url === h.url) === i)
+      .slice(0, WEB_HIT_LIMIT + 4);
+  }
 
   const webBrief = formatSearchBrief(hits);
   session.log(
@@ -392,6 +410,25 @@ async function runAgent(
     `WEB · ${hits.length} hits · top=${hits[0]?.publisher ?? "none"}`,
     { hitCount: hits.length },
   );
+
+  if (!hits.length) {
+    session.enqueueTask({
+      focus: `WEB RETRY · find citable sources for: ${task.focus}`.slice(0, 220),
+      parentId: taskId,
+      depth: task.depth + 1,
+      entityHint: task.entityHint,
+      entityTypeHint: task.entityTypeHint,
+      priority: 9,
+      searchQuery: `${task.entityHint || session.company} official site`,
+    });
+    session.updateTask(taskId, {
+      lastNarrative: "No web hits — queued source retry (nothing persisted).",
+      activity: "No web hits — retry queued",
+    });
+    session.markTaskDone(taskId);
+    session.log("warn", taskId, "SKIP LLM · zero web hits · nothing written ungrounded");
+    return;
+  }
 
   session.setPhase(
     taskId,
@@ -409,7 +446,7 @@ async function runAgent(
           company: session.company,
           task: session.task,
           taskItem: task,
-          context: session.contextBrief(80),
+          context: session.contextBrief(ON_RENDER ? 40 : 80),
           knownNames: session.knownNames(),
           webBrief,
           gaps,
@@ -417,41 +454,14 @@ async function runAgent(
         }),
       },
     ],
-    temperature: 0.28,
-    maxTokens: 12288,
+    temperature: 0.2,
+    maxTokens: MAX_TOKENS,
     reasoningEffort: "none",
     enableWebSearch: true,
   });
 
-  session.setPhase(taskId, "parsing", "Parsing grounded JSON…");
-  const finding = parseAgentFinding(content);
-
-  const hitByUrl = new Map(hits.map((h) => [h.url, h]));
-  for (const ent of finding.entities) {
-    if (!ent.sources) continue;
-    ent.sources = ent.sources.map((s) => {
-      if (s.url && hitByUrl.has(s.url)) {
-        const hit = hitByUrl.get(s.url)!;
-        return {
-          ...s,
-          kind: hit.kind,
-          publisher: s.publisher || hit.publisher,
-          title: s.title || hit.title,
-          confidence: Math.max(s.confidence ?? 0.5, hit.quality),
-        };
-      }
-      if (s.url) {
-        const scored = scoreSource(s.url, s.title);
-        return {
-          ...s,
-          kind: s.kind || scored.kind,
-          publisher: s.publisher || scored.publisher,
-          confidence: Math.max(s.confidence ?? 0.4, scored.quality * 0.9),
-        };
-      }
-      return s;
-    });
-  }
+  session.setPhase(taskId, "parsing", "Grounding JSON on web hits…");
+  const finding = groundFindingOnWeb(parseAgentFinding(content), hits);
 
   session.updateTask(taskId, {
     lastNarrative: finding.narrative,
@@ -528,7 +538,7 @@ async function runAgent(
       spawnCount += 1;
     }
 
-    for (const ent of finding.entities.slice(0, 8)) {
+    for (const ent of finding.entities.slice(0, ON_RENDER ? 4 : 8)) {
       if (!shouldDeepDiveType(ent.type) && ent.type !== "product") continue;
       session.enqueueTask({
         focus: `EXPAND · ${ent.name}: customers, suppliers, competitors, products, debt/equity — named entities only.`,

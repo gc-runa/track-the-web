@@ -270,7 +270,7 @@ export async function freeWebSearch(
 
 export function formatSearchBrief(hits: SearchHit[]): string {
   if (!hits.length) {
-    return "(no web hits this turn — mark uncertain claims as inference)";
+    return "(NO WEB HITS — emit zero entities; only followUps with better search queries)";
   }
   return hits
     .map(
