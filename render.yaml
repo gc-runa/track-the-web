@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: track-the-web
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: tencent/hy3:free
+      - key: SWARM_MAX_CONCURRENT
+        value: "6"
+      - key: SWARM_MIN_RUNTIME_MS
+        value: "3600000"
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
