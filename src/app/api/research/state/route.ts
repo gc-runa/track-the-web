@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/knowledge/store";
+import { loadSessionFromDb } from "@/lib/persist";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,9 +11,16 @@ export async function GET(req: Request) {
   if (!id) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
-  const session = getSession(id);
-  if (!session) {
-    return NextResponse.json({ error: "session not found" }, { status: 404 });
+
+  const live = getSession(id);
+  if (live) {
+    return NextResponse.json({ session: live.snapshot(), source: "memory" });
   }
-  return NextResponse.json({ session: session.snapshot() });
+
+  const persisted = await loadSessionFromDb(id);
+  if (persisted) {
+    return NextResponse.json({ session: persisted, source: "postgres" });
+  }
+
+  return NextResponse.json({ error: "session not found" }, { status: 404 });
 }

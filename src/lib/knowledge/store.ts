@@ -185,6 +185,45 @@ export class KnowledgeSession extends EventEmitter {
 
   private emitEvent(event: SwarmEvent) {
     this.emit("event", event);
+    // Persist asynchronously — never block the swarm on disk I/O.
+    void this.persistEvent(event).catch(() => undefined);
+  }
+
+  private async persistEvent(event: SwarmEvent) {
+    const {
+      persistEntity,
+      persistLog,
+      persistRelation,
+      persistSessionMeta,
+      persistTask,
+    } = await import("../persist");
+    const { redisSetJson } = await import("../redis");
+
+    switch (event.type) {
+      case "entity":
+        await persistEntity(this.id, event.entity);
+        break;
+      case "relation":
+        await persistRelation(this.id, event.relation);
+        break;
+      case "log":
+        await persistLog(this.id, event.log);
+        break;
+      case "task":
+        await persistTask(this.id, event.task);
+        break;
+      case "stats":
+        await persistSessionMeta({
+          id: this.id,
+          company: this.company,
+          task: this.task,
+          stats: event.stats,
+        });
+        await redisSetJson(`session:${this.id}:stats`, event.stats, 7200);
+        break;
+      default:
+        break;
+    }
   }
 
   log(

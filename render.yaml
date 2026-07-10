@@ -1,4 +1,19 @@
+databases:
+  - name: track-the-web-db
+    plan: free
+    databaseName: trackweb
+    user: trackweb_user
+    region: oregon
+    postgresMajorVersion: "16"
+
 services:
+  - type: keyvalue
+    name: track-the-web-kv
+    plan: free
+    region: oregon
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
   - type: web
     name: track-the-web
     runtime: node
@@ -19,4 +34,13 @@ services:
       - key: SWARM_MIN_RUNTIME_MS
         value: "3600000"
       - key: NEXT_PUBLIC_APP_URL
-        sync: false
+        value: https://track-the-web.onrender.com
+      - key: DATABASE_URL
+        fromDatabase:
+          name: track-the-web-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: track-the-web-kv
+          type: keyvalue
+          property: connectionString
