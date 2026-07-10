@@ -15,6 +15,7 @@ function elapsed(task: ResearchTask, now: number) {
 const PHASE_LABEL: Record<string, string> = {
   queued: "QUEUED",
   briefing: "BRIEF",
+  searching_web: "WEB",
   calling_hy3: "HY3",
   parsing: "PARSE",
   writing_map: "WRITE",

@@ -86,6 +86,7 @@ export interface Relation {
 export type AgentPhase =
   | "queued"
   | "briefing"
+  | "searching_web"
   | "calling_hy3"
   | "parsing"
   | "writing_map"

@@ -6,11 +6,12 @@ import { useSwarm } from "@/hooks/useSwarm";
 import { AgentBoard } from "@/components/AgentBoard";
 import { EntityView } from "@/components/EntityView";
 import { GraphMap } from "@/components/GraphMap";
+import { RepoSearch } from "@/components/RepoSearch";
 import { Sidebar } from "@/components/Sidebar";
 import { StatsBar } from "@/components/StatsBar";
 import { Tape } from "@/components/Tape";
 
-type View = "agents" | "map" | "page";
+type View = "agents" | "map" | "page" | "search";
 
 export function Workspace({ sessionId }: { sessionId: string }) {
   const router = useRouter();
@@ -84,6 +85,13 @@ export function Workspace({ sessionId }: { sessionId: string }) {
         >
           PAGE
         </button>
+        <button
+          type="button"
+          className={view === "search" ? "active" : ""}
+          onClick={() => setView("search")}
+        >
+          SEARCH
+        </button>
       </div>
 
       <div className="workspace-body terminal-body">
@@ -124,6 +132,17 @@ export function Workspace({ sessionId }: { sessionId: string }) {
               entities={entities}
               onSelect={setSelectedEntityId}
             />
+          )}
+          {view === "search" && (
+            <div className="search-pane">
+              <RepoSearch
+                sessionId={sessionId}
+                onSelect={(e) => {
+                  setSelectedEntityId(e.id);
+                  setView("page");
+                }}
+              />
+            </div>
           )}
         </main>
 

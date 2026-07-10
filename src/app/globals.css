@@ -1038,3 +1038,86 @@ textarea {
   background: #1f5c45;
   color: #e8fff4;
 }
+
+.phase-searching_web { color: #5ec8d8; }
+
+.search-pane {
+  height: 100%;
+  overflow: auto;
+  padding: 16px;
+}
+
+.repo-search-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.repo-search-form input {
+  border: 1px solid rgba(120, 200, 160, 0.2);
+  background: #0c1511;
+  color: #d7ebe0;
+  border-radius: 6px;
+  padding: 12px 14px;
+  outline: none;
+}
+
+.repo-search-form button {
+  border: 1px solid rgba(230, 179, 90, 0.4);
+  background: transparent;
+  color: #e6b35a;
+  padding: 0 16px;
+  border-radius: 6px;
+  font-family: var(--font-mono), monospace;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.repo-search-meta {
+  margin-top: 8px;
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  color: #7f9a8c;
+}
+
+.repo-search-results {
+  margin-top: 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.repo-search-item {
+  display: grid;
+  grid-template-columns: 90px 180px 1fr;
+  gap: 10px;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid rgba(120, 200, 160, 0.1);
+  background: transparent;
+  color: #d7ebe0;
+  padding: 10px 6px;
+  cursor: pointer;
+}
+
+.repo-search-item:hover {
+  background: rgba(230, 179, 90, 0.08);
+}
+
+.rsi-type {
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  color: #5ec8d8;
+  text-transform: uppercase;
+}
+
+.rsi-name {
+  font-weight: 600;
+}
+
+.rsi-sum {
+  color: #7f9a8c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}

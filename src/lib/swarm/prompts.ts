@@ -1,4 +1,5 @@
 import type { EntityType, ResearchTask, SessionState } from "../types";
+import { seedTasks as deepSeedTasks } from "./deepdive";
 
 export const ENTITY_TYPES: EntityType[] = [
   "company",
@@ -19,21 +20,15 @@ export const ENTITY_TYPES: EntityType[] = [
 ];
 
 export function systemPrompt() {
-  return `You are a grounded market-intelligence agent inside Track the Web — a self-building world information repository.
+  return `You are a grounded market-intelligence agent inside Track the Web — the self-building world information repository.
 
-Mission: expand a living digital map of suppliers, customers, competitors, products, markets, people, technologies, channels, regulations, partnerships, and risks.
+Mission: for every company uncovered, map ABSOLUTELY EVERYTHING — products, customers, suppliers, competitors, markets, people, debt, equity, ownership, partnerships, regulation, technology, history — and all relationships.
 
-Truth protocol (non-negotiable):
-- Every entity MUST include structured sources.
-- Never invent URLs. Only include a URL if you are certain it is real.
-- If evidence is weak, set confidence low and kind="inference", and say what is missing in the excerpt.
-- Prefer filings, regulatory docs, company sites, reputable news, and industry reports over vague "common knowledge".
-- Flag uncertainty explicitly rather than fabricating.
-
-Swarm protocol:
-- Always spawn follow-up research leads so the collective never stalls.
-- Prefer named entities over vague categories.
-- Output ONLY valid JSON matching the schema.`;
+Truth protocol:
+- Prefer the provided WEB SEARCH HITS (already quality-ranked). Cite them with real URLs from the hit list only.
+- Never invent URLs. If a claim lacks a hit, mark kind="inference" and lower confidence.
+- Prefer SEC filings, IR pages, Reuters/FT/Bloomberg/WSJ, regulators, Wikipedia over blogs/SEO spam.
+- Output ONLY valid JSON.`;
 }
 
 export function researchUserPrompt(opts: {
@@ -42,119 +37,70 @@ export function researchUserPrompt(opts: {
   taskItem: ResearchTask;
   context: string;
   knownNames: string[];
+  webBrief: string;
 }): string {
-  return `Target company: ${opts.company}
+  return `Root company: ${opts.company}
 Overall mission: ${opts.task}
 
-Your agent id: ${opts.taskItem.id}
+Agent id: ${opts.taskItem.id}
 Depth: ${opts.taskItem.depth}
-Focus for THIS agent: ${opts.taskItem.focus}
+Focus: ${opts.taskItem.focus}
 Entity hint: ${opts.taskItem.entityHint || "none"}
 Type hint: ${opts.taskItem.entityTypeHint || "none"}
 
-Current map snapshot (partial):
+WEB SEARCH HITS (quality-ranked — ground claims on these):
+${opts.webBrief}
+
+Current map snapshot:
 ${opts.context}
 
-Already known entity names (avoid exact duplicates; deepen instead):
-${opts.knownNames.slice(0, 80).join(", ") || "(none yet)"}
+Known names (deepen; avoid exact duplicate shells):
+${opts.knownNames.slice(0, 100).join(", ") || "(none)"}
 
-Return JSON with this exact shape:
+Return JSON:
 {
-  "narrative": "1-3 sentences on what you uncovered this step",
-  "entities": [
-    {
-      "type": "company|supplier|customer|competitor|product|market|segment|technology|person|location|regulation|partnership|channel|risk|other",
-      "name": "string",
-      "summary": "one sentence claim",
-      "details": ["bullet facts"],
-      "tags": ["short tags"],
-      "confidence": 0.0-1.0,
-      "sources": [
-        {
-          "kind": "filing|news|company_site|regulatory|research|industry_report|inference|other",
-          "title": "document or article title",
-          "publisher": "SEC|Reuters|company IR|…",
-          "url": "optional real https URL only — omit if unsure",
-          "excerpt": "what this source supports",
-          "confidence": 0.0-1.0
-        }
-      ]
-    }
-  ],
-  "relations": [
-    {
-      "type": "supplies|buys_from|competes_with|owns|partners_with|operates_in|sells|uses|regulates|employs|related_to",
-      "from": "entity name",
-      "to": "entity name",
-      "label": "short label",
-      "confidence": 0.0-1.0,
-      "sources": [
-        {
-          "kind": "news|filing|inference|…",
-          "title": "string",
-          "publisher": "string",
-          "excerpt": "why this link is asserted",
-          "confidence": 0.0-1.0
-        }
-      ]
-    }
-  ],
-  "followUps": [
-    {
-      "focus": "specific next research question",
-      "entityHint": "optional entity name",
-      "entityTypeHint": "optional type",
-      "priority": 1-10
-    }
-  ]
+  "narrative": "what you uncovered",
+  "entities": [{
+    "type": "company|supplier|customer|competitor|product|market|segment|technology|person|location|regulation|partnership|channel|risk|other",
+    "name": "string",
+    "summary": "claim",
+    "details": ["facts including financials when relevant"],
+    "tags": ["tags"],
+    "confidence": 0.0-1.0,
+    "sources": [{
+      "kind": "filing|news|company_site|regulatory|research|industry_report|inference|other",
+      "title": "string",
+      "publisher": "string",
+      "url": "ONLY a URL from WEB SEARCH HITS above, or omit",
+      "excerpt": "what it supports",
+      "confidence": 0.0-1.0
+    }]
+  }],
+  "relations": [{
+    "type": "supplies|buys_from|competes_with|owns|partners_with|operates_in|sells|uses|regulates|employs|related_to",
+    "from": "name",
+    "to": "name",
+    "label": "string",
+    "confidence": 0.0-1.0,
+    "sources": [{"kind":"news","title":"…","publisher":"…","excerpt":"…","confidence":0.6}]
+  }],
+  "followUps": [{
+    "focus": "next research question",
+    "entityHint": "optional",
+    "entityTypeHint": "optional",
+    "priority": 1-10
+  }]
 }
 
 Requirements:
-- Add 3-8 entities with AT LEAST one source each.
-- Add 2-10 relations with sources when possible.
-- Add 4-10 followUps branching the swarm.
-- Prefer net-new named entities.
-- Keep names short and canonical.`;
+- 4-10 entities with sources grounded on web hits when possible.
+- 3-12 relations.
+- 6-12 followUps that sprawl the swarm into every remaining unknown.
+- When you name a new company/competitor/supplier/customer, include enough detail to justify a full dossier.`;
 }
 
 export function seedTasks(company: string, task: string) {
-  return [
-    {
-      focus: `Establish the core profile of ${company}: what they sell, business model, geography, and scale. Cite sources.`,
-      entityHint: company,
-      entityTypeHint: "company" as EntityType,
-      priority: 10,
-    },
-    {
-      focus: `Map direct competitors of ${company} with source-backed differentiation claims.`,
-      entityTypeHint: "competitor" as EntityType,
-      priority: 9,
-    },
-    {
-      focus: `Identify major customers and customer segments for ${company} with evidence.`,
-      entityTypeHint: "customer" as EntityType,
-      priority: 9,
-    },
-    {
-      focus: `Identify key suppliers and upstream dependencies for ${company} with evidence.`,
-      entityTypeHint: "supplier" as EntityType,
-      priority: 9,
-    },
-    {
-      focus: `Catalog products/service lines of ${company} with source grounding.`,
-      entityTypeHint: "product" as EntityType,
-      priority: 8,
-    },
-    {
-      focus: `Describe markets and geographies where ${company} competes, with sources.`,
-      entityTypeHint: "market" as EntityType,
-      priority: 8,
-    },
-    {
-      focus: `Mission-aligned deep dive with citations: ${task}`,
-      priority: 10,
-    },
-  ];
+  return deepSeedTasks(company, task);
 }
 
 export function emptyClientState(

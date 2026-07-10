@@ -34,8 +34,9 @@ export function StartScreen() {
         <p className="brand-mark">Track the Web</p>
         <h1>Self-building world repository</h1>
         <p className="lede">
-          Bloomberg-style terminal. Hy3 agents spawn continuously, write the map
-          live, and ground every claim on visible source data.
+          Bloomberg-style terminal. Free web search + Hy3 agents sprawl forever:
+          every new company gets a full dossier — products, customers, debt,
+          equity, relationships — saved to Render Postgres.
         </p>
 
         <form className="start-form" onSubmit={onSubmit}>

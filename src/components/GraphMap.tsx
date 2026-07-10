@@ -37,7 +37,16 @@ export function GraphMap({
     new Map<string, { x: number; y: number; vx: number; vy: number }>(),
   );
 
-  const nodes = useMemo(() => entities.slice(0, 180), [entities]);
+  const nodes = useMemo(() => {
+    const companies = entities.filter((e) =>
+      ["company", "competitor", "supplier", "customer"].includes(e.type),
+    );
+    const others = entities.filter(
+      (e) => !["company", "competitor", "supplier", "customer"].includes(e.type),
+    );
+    // Prefer company graph; fill with related entities
+    return [...companies, ...others].slice(0, 220);
+  }, [entities]);
   const edges = useMemo(() => {
     const ids = new Set(nodes.map((n) => n.id));
     return relations
@@ -184,18 +193,23 @@ export function GraphMap({
       for (const n of nodes) {
         const p = positions.current.get(n.id)!;
         const selected = n.id === selectedId;
-        const r = selected ? 9 : 6;
+        const isCo = ["company", "competitor", "supplier", "customer"].includes(
+          n.type,
+        );
+        const r = selected ? 11 : isCo ? 8 : 5;
         ctx.beginPath();
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
         ctx.fillStyle = TYPE_COLOR[n.type] || "#555";
         ctx.fill();
         if (selected) {
-          ctx.strokeStyle = "#1a1a1a";
+          ctx.strokeStyle = "#e6b35a";
           ctx.lineWidth = 2;
           ctx.stroke();
         }
-        ctx.fillStyle = "rgba(20, 28, 24, 0.78)";
-        ctx.font = selected
+        ctx.fillStyle = isCo
+          ? "rgba(230, 179, 90, 0.95)"
+          : "rgba(215, 235, 224, 0.78)";
+        ctx.font = selected || isCo
           ? "600 12px var(--font-sans), sans-serif"
           : "500 11px var(--font-sans), sans-serif";
         ctx.fillText(n.name.slice(0, 28), p.x + 10, p.y + 4);
