@@ -28,15 +28,25 @@ export async function ensureSchema() {
   if (!ready) {
     ready = (async () => {
       await p.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          email TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL DEFAULT '',
+          password_hash TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
         CREATE TABLE IF NOT EXISTS sessions (
           id TEXT PRIMARY KEY,
           company TEXT NOT NULL,
           task TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'idle',
           stats JSONB NOT NULL DEFAULT '{}'::jsonb,
+          user_id TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id TEXT;
 
         CREATE TABLE IF NOT EXISTS entities (
           id TEXT PRIMARY KEY,
@@ -55,6 +65,7 @@ export async function ensureSchema() {
         );
         CREATE INDEX IF NOT EXISTS entities_session_idx ON entities(session_id);
         CREATE INDEX IF NOT EXISTS entities_type_idx ON entities(session_id, type);
+        CREATE INDEX IF NOT EXISTS entities_name_idx ON entities (lower(name));
 
         CREATE TABLE IF NOT EXISTS relations (
           id TEXT PRIMARY KEY,

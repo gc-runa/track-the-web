@@ -5,12 +5,19 @@ import {
   registerRunner,
   registerSession,
 } from "../knowledge/store";
-import { researchUserPrompt, seedTasks, systemPrompt } from "./prompts";
 import {
+  researchUserPrompt,
+  roleForTask,
+  seedTasks,
+  systemPrompt,
+} from "./prompts";
+import {
+  COVERAGE_FACETS,
   companyDeepDiveSeeds,
   shouldDeepDiveType,
 } from "./deepdive";
 import { formatSearchBrief, freeWebSearch, scoreSource } from "../websearch";
+import type { EntityType, ResearchTask } from "../types";
 
 /** Parallel OpenRouter Hy3 workers. Queue can grow without bound (capped). */
 const DEFAULT_CONCURRENCY = 32;
@@ -35,6 +42,41 @@ function normKey(name: string) {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function detectGaps(session: KnowledgeSession): string[] {
+  const ents = session.snapshot().entities;
+  const gaps: string[] = [];
+  for (const facet of COVERAGE_FACETS) {
+    const count = ents.filter((e) => facet.types.includes(e.type)).length;
+    if (count < 2) {
+      gaps.push(`Need more ${facet.label} (have ${count})`);
+    }
+  }
+  const companyLike = ents.filter((e) => shouldDeepDiveType(e.type));
+  if (companyLike.length < 3) {
+    gaps.push("Need more named companies in the ecosystem graph");
+  }
+  const weak = ents.filter((e) => (e.confidence ?? 0) < 0.5).slice(0, 5);
+  for (const e of weak) {
+    gaps.push(`Strengthen evidence for ${e.name} (${e.type})`);
+  }
+  return gaps.slice(0, 10);
+}
+
+function buildQueries(session: KnowledgeSession, task: ResearchTask): string[] {
+  const hint = task.entityHint || session.company;
+  const curated = task.searchQuery?.trim();
+  const queries = [
+    curated ||
+      (task.entityHint
+        ? `${task.entityHint} ${task.focus}`.slice(0, 140)
+        : task.focus.slice(0, 140)),
+    `${hint} customers suppliers competitors partners`,
+    `${hint} revenue debt equity ownership filing 10-K`,
+    `${hint} CEO board executives headquarters`,
+  ];
+  return [...new Set(queries.map((q) => q.slice(0, 160)))].slice(0, 4);
+}
+
 export function startSwarm(company: string, task: string) {
   const session = new KnowledgeSession({
     company,
@@ -53,7 +95,7 @@ export function startSwarm(company: string, task: string) {
   session.log(
     "system",
     "orchestrator",
-    `OPENROUTER SWARM · model=${model} · web+Hy3 · parallel=${maxConcurrent} · queueCap=${MAX_QUEUE}`,
+    `OPEN SWARM · model=${model} · web+Hy3 · parallel=${maxConcurrent} · queueCap=${MAX_QUEUE} · no-login`,
     { maxConcurrent, model, provider: "openrouter.ai" },
   );
 
@@ -64,6 +106,7 @@ export function startSwarm(company: string, task: string) {
       entityHint: seed.entityHint,
       entityTypeHint: seed.entityTypeHint,
       priority: seed.priority,
+      searchQuery: seed.searchQuery,
       depth: 0,
     });
   }
@@ -86,13 +129,14 @@ export function startSwarm(company: string, task: string) {
         entityHint: seed.entityHint,
         entityTypeHint: seed.entityTypeHint,
         priority: seed.priority,
+        searchQuery: seed.searchQuery,
       });
       n += 1;
     }
     session.log(
       "spawn",
       parentId,
-      `DOSSIER · ${name} · +${n} OpenRouter Hy3 agents`,
+      `DOSSIER · ${name} · +${n} specialist Hy3 agents`,
       { company: name },
     );
     return n;
@@ -100,7 +144,6 @@ export function startSwarm(company: string, task: string) {
 
   const pump = () => {
     if (stopping) return;
-    // Fill the entire parallel pool every tick
     while (active < maxConcurrent) {
       const [next] = session.nextQueued(1);
       if (!next) break;
@@ -132,7 +175,7 @@ export function startSwarm(company: string, task: string) {
       stopping = true;
       clearInterval(heartbeat);
       session.setStatus("stopped");
-      session.log("system", "orchestrator", "OpenRouter swarm halted.");
+      session.log("system", "orchestrator", "Open swarm halted.");
     },
   };
 
@@ -148,8 +191,7 @@ function maybeReplenish(
 ) {
   if (session.getStats().status !== "running") return;
   const stats = session.getStats();
-  // Keep the parallel pool fed — replenish before the queue fully drains
-  if (stats.queued + stats.running > Math.max(8, concurrency() / 2)) return;
+  if (stats.queued + stats.running > Math.max(12, concurrency() / 2)) return;
 
   const ents = session.snapshot().entities;
   const companies = ents.filter((e) => shouldDeepDiveType(e.type));
@@ -161,13 +203,41 @@ function maybeReplenish(
   }
   if (spawned > 0) return;
 
-  for (const e of ents.slice(0, 20)) {
+  // Gap-driven replenishment — attack missing coverage facets
+  const gaps = detectGaps(session);
+  const root = session.company;
+  for (const facet of COVERAGE_FACETS) {
+    const count = ents.filter((e) => facet.types.includes(e.type)).length;
+    if (count >= 3) continue;
+    const typeHint = facet.types[0] as EntityType;
     session.enqueueTask({
-      focus: `OpenRouter/Hy3 re-scan ${e.name} (${e.type}): fresh web evidence, relationships, financials.`,
+      focus: `GAP FILL · ${root}: discover more ${facet.label}. Prefer named entities with citations.`,
+      entityHint: root,
+      entityTypeHint: typeHint,
+      priority: 8,
+      depth: 1,
+      searchQuery: `${root} ${facet.label}`,
+    });
+    spawned += 1;
+  }
+  if (spawned > 0) {
+    session.log(
+      "spawn",
+      "orchestrator",
+      `GAP FILL · ${spawned} agents · ${gaps.slice(0, 3).join("; ") || "coverage"}`,
+    );
+    return;
+  }
+
+  // Forever loop: re-scan freshest entities with new web evidence
+  for (const e of ents.slice(0, 24)) {
+    session.enqueueTask({
+      focus: `RE-SCAN · ${e.name} (${e.type}): fresh web evidence, new relationships, financials, and named neighbors.`,
       entityHint: e.name,
       entityTypeHint: e.type,
-      priority: 6,
+      priority: 5,
       depth: 1,
+      searchQuery: `${e.name} ${e.type} news filing`,
     });
   }
 }
@@ -180,74 +250,66 @@ async function runAgent(
   const task = session.snapshot().tasks.find((t) => t.id === taskId);
   if (!task) return;
 
+  const role = roleForTask(task);
   session.markTaskRunning(taskId);
-  session.setPhase(taskId, "briefing", `Mission: ${task.focus.slice(0, 120)}`);
+  session.setPhase(taskId, "briefing", `${role} · ${task.focus.slice(0, 100)}`);
 
-  const queries = [
-    task.entityHint
-      ? `${task.entityHint} ${task.focus}`.slice(0, 140)
-      : task.focus.slice(0, 140),
-    task.entityHint
-      ? `${task.entityHint} competitors customers suppliers`
-      : `${session.company} ${task.focus}`.slice(0, 140),
-    task.entityHint
-      ? `${task.entityHint} revenue debt equity filing`
-      : `${session.company} market share`,
-  ];
+  const queries = buildQueries(session, task);
 
   session.setPhase(
     taskId,
     "searching_web",
     `Free web + OpenRouter web_search · ${queries[0].slice(0, 60)}…`,
   );
-  session.log("info", taskId, `WEB · parallel queries ×${queries.length}`);
+  session.log("info", taskId, `WEB · ${role} · queries ×${queries.length}`);
 
   const hitSets = await Promise.all(
     queries.map((q) => freeWebSearch(q, 8).catch(() => [])),
   );
   const hits = [...hitSets.flat()]
     .sort((a, b) => b.quality - a.quality)
-    .filter(
-      (h, i, arr) => arr.findIndex((x) => x.url === h.url) === i,
-    )
-    .slice(0, 16);
+    .filter((h, i, arr) => arr.findIndex((x) => x.url === h.url) === i)
+    .slice(0, 18);
 
   const webBrief = formatSearchBrief(hits);
   session.log(
     "source",
     taskId,
-    `WEB · ${hits.length} free hits · top=${hits[0]?.publisher ?? "none"}`,
+    `WEB · ${hits.length} hits · top=${hits[0]?.publisher ?? "none"}`,
     { hitCount: hits.length },
   );
 
   session.setPhase(
     taskId,
     "calling_hy3",
-    `OpenRouter · ${process.env.OPENROUTER_MODEL || HY3_MODEL} · web tool on`,
+    `OpenRouter · ${process.env.OPENROUTER_MODEL || HY3_MODEL} · ${role}`,
   );
 
+  const gaps = detectGaps(session);
   const content = await chatCompletion({
     messages: [
-      { role: "system", content: systemPrompt() },
+      { role: "system", content: systemPrompt(role) },
       {
         role: "user",
         content: researchUserPrompt({
           company: session.company,
           task: session.task,
           taskItem: task,
-          context: session.contextBrief(60),
+          context: session.contextBrief(80),
           knownNames: session.knownNames(),
           webBrief,
+          gaps,
+          role,
         }),
       },
     ],
-    temperature: 0.35,
-    maxTokens: 8192,
+    temperature: 0.28,
+    maxTokens: 12288,
     reasoningEffort: "none",
     enableWebSearch: true,
   });
 
-  session.setPhase(taskId, "parsing", "Parsing Hy3 JSON…");
+  session.setPhase(taskId, "parsing", "Parsing grounded JSON…");
   const finding = parseAgentFinding(content);
 
   const hitByUrl = new Map(hits.map((h) => [h.url, h]));
@@ -325,7 +387,7 @@ async function runAgent(
     });
   }
 
-  session.setPhase(taskId, "spawning", "Forking parallel Hy3 children…");
+  session.setPhase(taskId, "spawning", "Forking specialist children…");
 
   let spawnCount = 0;
   for (const name of newCompanies) {
@@ -337,6 +399,7 @@ async function runAgent(
       .filter((x) => x?.focus)
       .slice(0, FOLLOWUPS_PER_AGENT)) {
       const nextDepth = task.depth + 1;
+      const hint = f.entityHint || task.entityHint;
       session.enqueueTask({
         focus: f.focus,
         parentId: taskId,
@@ -344,18 +407,23 @@ async function runAgent(
         entityHint: f.entityHint,
         entityTypeHint: f.entityTypeHint,
         priority: f.priority ?? Math.max(1, 9 - Math.min(nextDepth, 8)),
+        searchQuery: hint
+          ? `${hint} ${f.focus}`.slice(0, 140)
+          : f.focus.slice(0, 140),
       });
       spawnCount += 1;
     }
 
-    for (const ent of finding.entities.slice(0, 6)) {
+    for (const ent of finding.entities.slice(0, 8)) {
+      if (!shouldDeepDiveType(ent.type) && ent.type !== "product") continue;
       session.enqueueTask({
-        focus: `Expand ${ent.name}: customers, suppliers, competitors, products, debt/equity — via OpenRouter Hy3 + web.`,
+        focus: `EXPAND · ${ent.name}: customers, suppliers, competitors, products, debt/equity — named entities only.`,
         parentId: taskId,
         depth: task.depth + 1,
         entityHint: ent.name,
         entityTypeHint: ent.type,
         priority: 6,
+        searchQuery: `${ent.name} customers suppliers competitors`,
       });
       spawnCount += 1;
     }
@@ -366,7 +434,7 @@ async function runAgent(
   session.log(
     "system",
     taskId,
-    `DONE · +${finds} ents · +${finding.relations.length} links · +${spawnCount} agents · web=${hits.length}`,
+    `DONE · ${role} · +${finds} ents · +${finding.relations.length} links · +${spawnCount} agents · web=${hits.length}`,
   );
 }
 

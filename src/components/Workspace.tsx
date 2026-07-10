@@ -72,6 +72,12 @@ export function Workspace({ sessionId }: { sessionId: string }) {
       {error && <div className="banner">{error}</div>}
 
       <nav className="view-tabs" aria-label="Workspace">
+        <a href="/" className="tab-home">
+          Home
+        </a>
+        <a href="/library" className="tab-home">
+          Library
+        </a>
         {NAV.map((item) => (
           <button
             key={item.id}

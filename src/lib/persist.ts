@@ -13,18 +13,20 @@ export async function persistSessionMeta(input: {
   company: string;
   task: string;
   stats: SwarmStats;
+  userId?: string;
 }) {
   if (!hasDatabase()) return;
   await ensureSchema();
   const p = getPool()!;
   await p.query(
-    `INSERT INTO sessions (id, company, task, status, stats, updated_at)
-     VALUES ($1,$2,$3,$4,$5::jsonb,NOW())
+    `INSERT INTO sessions (id, company, task, status, stats, user_id, updated_at)
+     VALUES ($1,$2,$3,$4,$5::jsonb,$6,NOW())
      ON CONFLICT (id) DO UPDATE SET
        company=EXCLUDED.company,
        task=EXCLUDED.task,
        status=EXCLUDED.status,
        stats=EXCLUDED.stats,
+       user_id=COALESCE(EXCLUDED.user_id, sessions.user_id),
        updated_at=NOW()`,
     [
       input.id,
@@ -32,6 +34,7 @@ export async function persistSessionMeta(input: {
       input.task,
       input.stats.status,
       JSON.stringify(input.stats),
+      input.userId || null,
     ],
   );
 }
@@ -268,13 +271,50 @@ export async function loadSessionFromDb(
   };
 }
 
-export async function listPersistedSessions() {
+export async function listPersistedSessions(_userId?: string) {
   if (!hasDatabase()) return [];
   await ensureSchema();
   const p = getPool()!;
   const res = await p.query(
-    `SELECT id, company, task, status, stats, created_at, updated_at
-     FROM sessions ORDER BY updated_at DESC LIMIT 50`,
+    `SELECT s.id, s.company, s.task, s.status, s.stats, s.created_at, s.updated_at,
+            (SELECT COUNT(*)::int FROM entities e WHERE e.session_id = s.id) AS entity_count,
+            (SELECT COUNT(*)::int FROM relations r WHERE r.session_id = s.id) AS relation_count,
+            (SELECT COUNT(*)::int FROM (
+               SELECT 1 FROM entities e2, jsonb_array_elements(e2.source_records) WHERE e2.session_id = s.id
+             ) src) AS source_count
+     FROM sessions s
+     ORDER BY s.updated_at DESC
+     LIMIT 100`,
+  );
+  return res.rows;
+}
+
+export async function libraryStats() {
+  if (!hasDatabase()) {
+    return { sessions: 0, entities: 0, relations: 0, sources: 0 };
+  }
+  await ensureSchema();
+  const p = getPool()!;
+  const res = await p.query(`
+    SELECT
+      (SELECT COUNT(*)::int FROM sessions) AS sessions,
+      (SELECT COUNT(*)::int FROM entities) AS entities,
+      (SELECT COUNT(*)::int FROM relations) AS relations,
+      (SELECT COALESCE(SUM(jsonb_array_length(source_records)),0)::int FROM entities) AS sources
+  `);
+  return res.rows[0];
+}
+
+export async function recentEntities(limit = 24) {
+  if (!hasDatabase()) return [];
+  await ensureSchema();
+  const p = getPool()!;
+  const res = await p.query(
+    `SELECT id, session_id, type, name, summary, confidence, source_records, updated_at
+     FROM entities
+     ORDER BY updated_at DESC
+     LIMIT $1`,
+    [limit],
   );
   return res.rows;
 }

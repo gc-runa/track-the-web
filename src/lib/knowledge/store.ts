@@ -95,6 +95,7 @@ export class KnowledgeSession extends EventEmitter {
   readonly task: string;
   readonly createdAt: number;
   readonly minRuntimeMs: number;
+  readonly userId?: string;
 
   private entities = new Map<string, Entity>();
   private entityByKey = new Map<string, string>();
@@ -116,6 +117,7 @@ export class KnowledgeSession extends EventEmitter {
     task: string;
     minRuntimeMs?: number;
     id?: string;
+    userId?: string;
   }) {
     super();
     this.setMaxListeners(200);
@@ -124,6 +126,7 @@ export class KnowledgeSession extends EventEmitter {
     this.task = opts.task.trim();
     this.createdAt = Date.now();
     this.minRuntimeMs = opts.minRuntimeMs ?? 3_600_000;
+    this.userId = opts.userId;
   }
 
   private ratePerMin(times: number[]) {
@@ -218,6 +221,7 @@ export class KnowledgeSession extends EventEmitter {
           company: this.company,
           task: this.task,
           stats: event.stats,
+          userId: this.userId,
         });
         await redisSetJson(`session:${this.id}:stats`, event.stats, 7200);
         break;
@@ -255,6 +259,7 @@ export class KnowledgeSession extends EventEmitter {
     entityHint?: string;
     entityTypeHint?: EntityType;
     priority?: number;
+    searchQuery?: string;
   }): ResearchTask {
     const task: ResearchTask = {
       id: slugId("agent"),
@@ -264,6 +269,7 @@ export class KnowledgeSession extends EventEmitter {
       entityHint: input.entityHint,
       entityTypeHint: input.entityTypeHint,
       priority: input.priority ?? 5,
+      searchQuery: input.searchQuery,
       status: "queued",
       phase: "queued",
       activity: "Waiting in swarm queue",

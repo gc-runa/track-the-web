@@ -102,6 +102,8 @@ export interface ResearchTask {
   entityHint?: string;
   entityTypeHint?: EntityType;
   priority: number;
+  /** Optional curated web query for this agent */
+  searchQuery?: string;
   status: "queued" | "running" | "done" | "failed";
   phase: AgentPhase;
   /** Human-readable live status line for the Bloomberg board */

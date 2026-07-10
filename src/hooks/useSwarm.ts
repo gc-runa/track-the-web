@@ -86,6 +86,7 @@ export function useSwarm(sessionId?: string) {
   useEffect(() => {
     if (!sessionId) return;
 
+    let cancelled = false;
     const es = new EventSource(`/api/research/stream?id=${sessionId}`);
     esRef.current = es;
 
@@ -105,10 +106,26 @@ export function useSwarm(sessionId?: string) {
 
     es.onerror = () => {
       setConnected(false);
-      setError("Live stream reconnecting…");
+      // Historical / cold session: load forever store once
+      void fetch(`/api/research/state?id=${sessionId}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (cancelled || !data.session) {
+            setError("Live stream reconnecting…");
+            return;
+          }
+          setSession(data.session as SessionState);
+          setError(
+            data.source === "postgres"
+              ? "Viewing saved repository (swarm not live)"
+              : null,
+          );
+        })
+        .catch(() => setError("Live stream reconnecting…"));
     };
 
     return () => {
+      cancelled = true;
       es.close();
       esRef.current = null;
       setConnected(false);

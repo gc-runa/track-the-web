@@ -148,9 +148,9 @@ export async function chatCompletion(params: {
       {
         type: "openrouter:web_search",
         parameters: {
-          max_results: 5,
-          max_total_results: 12,
-          search_context_size: "low",
+          max_results: 8,
+          max_total_results: 16,
+          search_context_size: "medium",
           allowed_domains: QUALITY_DOMAINS,
         },
       },
