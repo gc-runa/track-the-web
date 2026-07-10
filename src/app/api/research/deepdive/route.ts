@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { deepDiveEntity } from "@/lib/swarm/orchestrator";
-import { getSession } from "@/lib/knowledge/store";
+import { deepDiveEntity, ensureLiveSwarm } from "@/lib/swarm/orchestrator";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,17 +14,14 @@ export async function POST(req: Request) {
     if (!body.sessionId) {
       return NextResponse.json({ error: "sessionId required" }, { status: 400 });
     }
-    const session = getSession(body.sessionId);
-    if (!session) {
-      return NextResponse.json(
-        { error: "Live swarm not running — reopen a live map to deep dive." },
-        { status: 404 },
-      );
-    }
+
+    const { session } = await ensureLiveSwarm(body.sessionId);
 
     let name = body.entityName?.trim();
     if (!name && body.entityId) {
-      const ent = session.snapshot().entities.find((e) => e.id === body.entityId);
+      const ent = session
+        .snapshot()
+        .entities.find((e) => e.id === body.entityId);
       name = ent?.name;
     }
     if (!name) {
@@ -33,7 +29,11 @@ export async function POST(req: Request) {
     }
 
     const result = deepDiveEntity(body.sessionId, name);
-    return NextResponse.json({ ok: true, ...result, session: session.snapshot() });
+    return NextResponse.json({
+      ok: true,
+      ...result,
+      session: session.snapshot(),
+    });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Deep dive failed" },

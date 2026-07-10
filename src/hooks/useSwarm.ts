@@ -16,6 +16,7 @@ export function useSwarm(sessionId?: string) {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const resumeInFlight = useRef(false);
 
   const applyEvent = useCallback((event: SwarmEvent) => {
     setSession((prev) => {
@@ -75,6 +76,7 @@ export function useSwarm(sessionId?: string) {
             stats: {
               ...base.stats,
               elapsedMs: Date.now() - base.stats.startedAt,
+              status: "running",
             },
           };
         default:
@@ -83,54 +85,101 @@ export function useSwarm(sessionId?: string) {
     });
   }, []);
 
+  const resume = useCallback(async () => {
+    if (!sessionId || resumeInFlight.current) return null;
+    resumeInFlight.current = true;
+    try {
+      const res = await fetch("/api/research/resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Resume failed");
+      setSession(data.session as SessionState);
+      setError(null);
+      return data.session as SessionState;
+    } finally {
+      resumeInFlight.current = false;
+    }
+  }, [sessionId]);
+
   useEffect(() => {
     if (!sessionId) return;
-
     let cancelled = false;
-    const es = new EventSource(`/api/research/stream?id=${sessionId}`);
-    esRef.current = es;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    es.onopen = () => {
-      setConnected(true);
-      setError(null);
-    };
+    const connect = () => {
+      if (cancelled) return;
+      esRef.current?.close();
+      const es = new EventSource(`/api/research/stream?id=${sessionId}`);
+      esRef.current = es;
 
-    es.onmessage = (msg) => {
-      try {
-        const event = JSON.parse(msg.data) as SwarmEvent;
-        applyEvent(event);
-      } catch {
-        /* ignore malformed */
-      }
-    };
+      es.onopen = () => {
+        setConnected(true);
+        setError(null);
+      };
 
-    es.onerror = () => {
-      setConnected(false);
-      // Historical / cold session: load forever store once
-      void fetch(`/api/research/state?id=${sessionId}`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (cancelled || !data.session) {
-            setError("Live stream reconnecting…");
-            return;
+      es.onmessage = (msg) => {
+        try {
+          const event = JSON.parse(msg.data) as SwarmEvent;
+          applyEvent(event);
+          setConnected(true);
+        } catch {
+          /* ignore */
+        }
+      };
+
+      es.onerror = () => {
+        setConnected(false);
+        es.close();
+        // Auto-resume forever swarm, then reconnect SSE
+        void (async () => {
+          try {
+            await resume();
+            setError(null);
+          } catch (err) {
+            const msg =
+              err instanceof Error ? err.message : "Reconnecting swarm…";
+            if (/manually stopped/i.test(msg)) {
+              setError("Swarm stopped. Start a new map to continue.");
+              return;
+            }
+            // Fall back to saved snapshot while retrying
+            try {
+              const r = await fetch(`/api/research/state?id=${sessionId}`);
+              const data = await r.json();
+              if (!cancelled && data.session) {
+                setSession(data.session as SessionState);
+              }
+            } catch {
+              /* ignore */
+            }
+            setError("Reconnecting forever swarm…");
           }
-          setSession(data.session as SessionState);
-          setError(
-            data.source === "postgres"
-              ? "Viewing saved repository (swarm not live)"
-              : null,
-          );
-        })
-        .catch(() => setError("Live stream reconnecting…"));
+          if (!cancelled) {
+            retryTimer = setTimeout(connect, 1500);
+          }
+        })();
+      };
     };
+
+    connect();
+
+    // Keep host awake while the desk is open
+    const keep = setInterval(() => {
+      void fetch("/api/health").catch(() => undefined);
+    }, 45_000);
 
     return () => {
       cancelled = true;
-      es.close();
+      if (retryTimer) clearTimeout(retryTimer);
+      clearInterval(keep);
+      esRef.current?.close();
       esRef.current = null;
       setConnected(false);
     };
-  }, [sessionId, applyEvent]);
+  }, [sessionId, applyEvent, resume]);
 
   const start = useCallback(async (company: string, task: string) => {
     setError(null);
@@ -179,6 +228,7 @@ export function useSwarm(sessionId?: string) {
     error,
     start,
     stop,
+    resume,
     deepDive,
     entities: (session?.entities || []) as Entity[],
     relations: (session?.relations || []) as Relation[],

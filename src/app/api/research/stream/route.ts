@@ -1,4 +1,4 @@
-import { getSession } from "@/lib/knowledge/store";
+import { ensureLiveSwarm } from "@/lib/swarm/orchestrator";
 import type { SwarmEvent } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -11,9 +11,12 @@ export async function GET(req: Request) {
     return new Response("id required", { status: 400 });
   }
 
-  const session = getSession(id);
-  if (!session) {
-    return new Response("session not found", { status: 404 });
+  let session;
+  try {
+    ({ session } = await ensureLiveSwarm(id));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "session not found";
+    return new Response(msg, { status: 404 });
   }
 
   const encoder = new TextEncoder();
@@ -21,7 +24,11 @@ export async function GET(req: Request) {
 
   const stream = new ReadableStream({
     start(controller) {
-      const send = (event: SwarmEvent | { type: "session"; session: ReturnType<typeof session.snapshot> }) => {
+      const send = (
+        event:
+          | SwarmEvent
+          | { type: "session"; session: ReturnType<typeof session.snapshot> },
+      ) => {
         if (closed) return;
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
@@ -36,7 +43,7 @@ export async function GET(req: Request) {
       const ping = setInterval(() => {
         if (closed) return;
         controller.enqueue(encoder.encode(`: ping\n\n`));
-      }, 15000);
+      }, 12000);
 
       const close = () => {
         if (closed) return;

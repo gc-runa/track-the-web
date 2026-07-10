@@ -192,6 +192,24 @@ export class KnowledgeSession extends EventEmitter {
     };
   }
 
+  /** Load persisted graph into memory without re-writing to Postgres. */
+  hydrateFromPersisted(state: SessionState) {
+    for (const e of state.entities || []) {
+      this.entities.set(e.id, e);
+      this.entityByKey.set(`${e.type}:${normalizeName(e.name)}`, e.id);
+      this.sourceCount += e.sourceRecords?.length || 0;
+    }
+    for (const r of state.relations || []) {
+      this.relations.set(r.id, r);
+      this.relationKeys.add(`${r.type}:${r.fromId}:${r.toId}`);
+    }
+    this.logs = (state.logs || []).slice(-800);
+    // Don't revive old queued/running tasks — resume will spawn fresh work.
+    this.spawned = state.stats?.spawned || this.entities.size;
+    this.completed = state.stats?.completed || 0;
+    this.failed = state.stats?.failed || 0;
+  }
+
   private emitEvent(event: SwarmEvent) {
     this.emit("event", event);
     // Persist asynchronously — never block the swarm on disk I/O.

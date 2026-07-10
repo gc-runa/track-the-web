@@ -18,7 +18,8 @@ import {
   shouldDeepDiveType,
 } from "./deepdive";
 import { formatSearchBrief, freeWebSearch, scoreSource } from "../websearch";
-import type { EntityType, ResearchTask } from "../types";
+import type { EntityType, ResearchTask, SessionState } from "../types";
+import { loadSessionFromDb } from "../persist";
 
 /** Parallel OpenRouter Hy3 workers. Queue can grow without bound (capped). */
 const DEFAULT_CONCURRENCY = 1000;
@@ -26,6 +27,8 @@ const MAX_CONCURRENCY_CAP = 1000;
 const MAX_QUEUE = 5_000_000;
 const MAX_DEPTH = 128;
 const FOLLOWUPS_PER_AGENT = 20;
+
+const resumeLocks = new Set<string>();
 
 function concurrency() {
   const n = Number(process.env.SWARM_MAX_CONCURRENT || DEFAULT_CONCURRENCY);
@@ -48,16 +51,13 @@ function detectGaps(session: KnowledgeSession): string[] {
   const gaps: string[] = [];
   for (const facet of COVERAGE_FACETS) {
     const count = ents.filter((e) => facet.types.includes(e.type)).length;
-    if (count < 2) {
-      gaps.push(`Need more ${facet.label} (have ${count})`);
-    }
+    if (count < 2) gaps.push(`Need more ${facet.label} (have ${count})`);
   }
   const companyLike = ents.filter((e) => shouldDeepDiveType(e.type));
   if (companyLike.length < 3) {
     gaps.push("Need more named companies in the ecosystem graph");
   }
-  const weak = ents.filter((e) => (e.confidence ?? 0) < 0.5).slice(0, 5);
-  for (const e of weak) {
+  for (const e of ents.filter((x) => (x.confidence ?? 0) < 0.5).slice(0, 5)) {
     gaps.push(`Strengthen evidence for ${e.name} (${e.type})`);
   }
   return gaps.slice(0, 10);
@@ -78,14 +78,17 @@ function buildQueries(session: KnowledgeSession, task: ResearchTask): string[] {
   return [...new Set(queries.map((q) => q.slice(0, 160)))].slice(0, 4);
 }
 
-export function startSwarm(company: string, task: string) {
-  const session = new KnowledgeSession({
-    company,
-    task,
-    minRuntimeMs: minRuntimeMs(),
-  });
-  registerSession(session);
+type SpawnFn = (
+  name: string,
+  parentId: string,
+  depth: number,
+  force?: boolean,
+) => number;
 
+function attachRunner(
+  session: KnowledgeSession,
+  opts?: { seed?: boolean; resume?: boolean },
+) {
   const deepDivied = new Set<string>();
   let stopping = false;
   let active = 0;
@@ -96,28 +99,31 @@ export function startSwarm(company: string, task: string) {
   session.log(
     "system",
     "orchestrator",
-    `OPEN SWARM · model=${model} · web+Hy3 · parallel=${maxConcurrent} · queueCap=${MAX_QUEUE} · no-login`,
-    { maxConcurrent, model, provider: "openrouter.ai" },
+    opts?.resume
+      ? `RESUME FOREVER · model=${model} · parallel=${maxConcurrent} · never stops until manual Stop`
+      : `OPEN SWARM FOREVER · model=${model} · parallel=${maxConcurrent} · never stops until manual Stop`,
+    { maxConcurrent, model, provider: "openrouter.ai", forever: true },
   );
 
-  deepDivied.add(normKey(company));
-  for (const seed of seedTasks(company, task)) {
-    session.enqueueTask({
-      focus: seed.focus,
-      entityHint: seed.entityHint,
-      entityTypeHint: seed.entityTypeHint,
-      priority: seed.priority,
-      searchQuery: seed.searchQuery,
-      depth: 0,
-    });
+  deepDivied.add(normKey(session.company));
+  for (const e of session.snapshot().entities) {
+    if (shouldDeepDiveType(e.type)) deepDivied.add(normKey(e.name));
   }
 
-  const spawnCompanyDossier = (
-    name: string,
-    parentId: string,
-    depth: number,
-    force = false,
-  ) => {
+  if (opts?.seed !== false && !opts?.resume) {
+    for (const seed of seedTasks(session.company, session.task)) {
+      session.enqueueTask({
+        focus: seed.focus,
+        entityHint: seed.entityHint,
+        entityTypeHint: seed.entityTypeHint,
+        priority: seed.priority,
+        searchQuery: seed.searchQuery,
+        depth: 0,
+      });
+    }
+  }
+
+  const spawnCompanyDossier: SpawnFn = (name, parentId, depth, force = false) => {
     const key = normKey(name);
     if (!key) return 0;
     if (!force && deepDivied.has(key)) return 0;
@@ -167,26 +173,107 @@ export function startSwarm(company: string, task: string) {
   };
 
   const heartbeat = setInterval(() => {
+    if (stopping) return;
     session.emit("event", { type: "heartbeat", ts: Date.now() });
     session.emit("event", { type: "stats", stats: session.getStats() });
     maybeReplenish(session, deepDivied, spawnCompanyDossier);
     pump();
-  }, 2000);
+  }, 1500);
+
+  const keepAlive = setInterval(() => {
+    if (stopping) return;
+    const base =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      (process.env.RENDER_EXTERNAL_URL
+        ? `https://${process.env.RENDER_EXTERNAL_URL}`
+        : "");
+    if (!base) return;
+    void fetch(`${base.replace(/\/$/, "")}/api/health`).catch(() => undefined);
+  }, 60_000);
 
   const runner = {
     stop: () => {
       stopping = true;
       clearInterval(heartbeat);
+      clearInterval(keepAlive);
       session.setStatus("stopped");
-      session.log("system", "orchestrator", "Open swarm halted.");
+      session.log(
+        "system",
+        "orchestrator",
+        "Swarm halted by manual Stop — will not auto-resume.",
+      );
     },
     deepDive: (name: string) =>
       spawnCompanyDossier(name, "ui-deepdive", 1, true),
   };
 
   registerRunner(session.id, runner);
+
+  if (opts?.resume) {
+    maybeReplenish(session, deepDivied, spawnCompanyDossier);
+    spawnCompanyDossier(session.company, "resume", 0, true);
+  }
+
   pump();
   return session;
+}
+
+export function startSwarm(company: string, task: string) {
+  const session = new KnowledgeSession({
+    company,
+    task,
+    minRuntimeMs: minRuntimeMs(),
+  });
+  registerSession(session);
+  return attachRunner(session, { seed: true });
+}
+
+/** Hydrate + restart a swarm that died on process sleep/restart — unless manually stopped. */
+export async function ensureLiveSwarm(sessionId: string): Promise<{
+  session: KnowledgeSession;
+  resumed: boolean;
+}> {
+  const live = getSession(sessionId);
+  if (live) {
+    const status = live.getStats().status;
+    if (status === "stopped") {
+      throw new Error("Session was manually stopped");
+    }
+    if (status !== "running") live.setStatus("running");
+    if (!getRunner(sessionId)) {
+      attachRunner(live, { seed: false, resume: true });
+      return { session: live, resumed: true };
+    }
+    return { session: live, resumed: false };
+  }
+
+  if (resumeLocks.has(sessionId)) {
+    await new Promise((r) => setTimeout(r, 800));
+    const again = getSession(sessionId);
+    if (again) return { session: again, resumed: true };
+  }
+
+  resumeLocks.add(sessionId);
+  try {
+    const persisted = await loadSessionFromDb(sessionId);
+    if (!persisted) throw new Error("session not found");
+    if (persisted.stats?.status === "stopped") {
+      throw new Error("Session was manually stopped");
+    }
+
+    const session = new KnowledgeSession({
+      id: persisted.id,
+      company: persisted.company,
+      task: persisted.task,
+      minRuntimeMs: minRuntimeMs(),
+    });
+    session.hydrateFromPersisted(persisted as SessionState);
+    registerSession(session);
+    attachRunner(session, { seed: false, resume: true });
+    return { session, resumed: true };
+  } finally {
+    resumeLocks.delete(sessionId);
+  }
 }
 
 export function deepDiveEntity(sessionId: string, name: string) {
@@ -208,11 +295,11 @@ export function deepDiveEntity(sessionId: string, name: string) {
 function maybeReplenish(
   session: KnowledgeSession,
   deepDivied: Set<string>,
-  spawnCompanyDossier: (name: string, parentId: string, depth: number) => number,
+  spawnCompanyDossier: SpawnFn,
 ) {
   if (session.getStats().status !== "running") return;
   const stats = session.getStats();
-  if (stats.queued + stats.running > Math.max(12, concurrency() / 2)) return;
+  if (stats.queued + stats.running > Math.max(64, concurrency() * 2)) return;
 
   const ents = session.snapshot().entities;
   const companies = ents.filter((e) => shouldDeepDiveType(e.type));
@@ -224,17 +311,14 @@ function maybeReplenish(
   }
   if (spawned > 0) return;
 
-  // Gap-driven replenishment — attack missing coverage facets
-  const gaps = detectGaps(session);
   const root = session.company;
   for (const facet of COVERAGE_FACETS) {
     const count = ents.filter((e) => facet.types.includes(e.type)).length;
     if (count >= 3) continue;
-    const typeHint = facet.types[0] as EntityType;
     session.enqueueTask({
       focus: `GAP FILL · ${root}: discover more ${facet.label}. Prefer named entities with citations.`,
       entityHint: root,
-      entityTypeHint: typeHint,
+      entityTypeHint: facet.types[0] as EntityType,
       priority: 8,
       depth: 1,
       searchQuery: `${root} ${facet.label}`,
@@ -245,15 +329,21 @@ function maybeReplenish(
     session.log(
       "spawn",
       "orchestrator",
-      `GAP FILL · ${spawned} agents · ${gaps.slice(0, 3).join("; ") || "coverage"}`,
+      `GAP FILL · ${spawned} agents · forever coverage`,
     );
     return;
   }
 
-  // Forever loop: re-scan freshest entities with new web evidence
-  for (const e of ents.slice(0, 24)) {
+  const slice = ents.length
+    ? ents.slice(0, Math.min(40, Math.max(8, ents.length)))
+    : [];
+  if (slice.length === 0) {
+    spawnCompanyDossier(root, "orchestrator-idle", 0, true);
+    return;
+  }
+  for (const e of slice) {
     session.enqueueTask({
-      focus: `RE-SCAN · ${e.name} (${e.type}): fresh web evidence, new relationships, financials, and named neighbors.`,
+      focus: `FOREVER RE-SCAN · ${e.name} (${e.type}): fresh web evidence, new relationships, financials, named neighbors.`,
       entityHint: e.name,
       entityTypeHint: e.type,
       priority: 5,
@@ -261,12 +351,15 @@ function maybeReplenish(
       searchQuery: `${e.name} ${e.type} news filing`,
     });
   }
+  if (stats.completed > 0 && stats.completed % 50 < 3) {
+    spawnCompanyDossier(root, "orchestrator-forever", 0, true);
+  }
 }
 
 async function runAgent(
   session: KnowledgeSession,
   taskId: string,
-  spawnCompanyDossier: (name: string, parentId: string, depth: number) => number,
+  spawnCompanyDossier: SpawnFn,
 ) {
   const task = session.snapshot().tasks.find((t) => t.id === taskId);
   if (!task) return;
