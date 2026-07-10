@@ -27,7 +27,9 @@ const HIGH_QUALITY_HOSTS: Array<{
   { host: "wsj.com", score: 0.88, kind: "news" },
   { host: "nytimes.com", score: 0.85, kind: "news" },
   { host: "economist.com", score: 0.85, kind: "news" },
+  { host: "cnbc.com", score: 0.84, kind: "news" },
   { host: "forbes.com", score: 0.75, kind: "news" },
+  { host: "marketwatch.com", score: 0.8, kind: "news" },
   { host: "wikipedia.org", score: 0.82, kind: "research" },
   { host: "crunchbase.com", score: 0.78, kind: "research" },
   { host: "pitchbook.com", score: 0.78, kind: "research" },
@@ -42,7 +44,7 @@ const HIGH_QUALITY_HOSTS: Array<{
 ];
 
 const UA =
-  "Mozilla/5.0 (compatible; TrackTheWeb/1.0; +https://track-the-web.onrender.com)";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
 function hostOf(url: string) {
   try {
@@ -59,7 +61,11 @@ export function scoreSource(
   const host = hostOf(url);
   let best = { quality: 0.45, kind: "other" as SearchHit["kind"] };
   for (const row of HIGH_QUALITY_HOSTS) {
-    if (host === row.host || host.endsWith(`.${row.host}`) || host.includes(row.host)) {
+    if (
+      host === row.host ||
+      host.endsWith(`.${row.host}`) ||
+      host.includes(row.host)
+    ) {
       if (row.score > best.quality) best = { quality: row.score, kind: row.kind };
     }
   }
@@ -75,44 +81,88 @@ export function scoreSource(
   return { ...best, publisher: host || "web" };
 }
 
-function decodeDuckUrl(raw: string) {
+function stripHtml(s: string) {
+  return s
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchText(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 4500,
+): Promise<{ ok: boolean; status: number; text: string }> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const u = new URL(raw, "https://duckduckgo.com");
-    const uddg = u.searchParams.get("uddg");
-    if (uddg) return decodeURIComponent(uddg);
-    return raw.startsWith("http") ? raw : `https:${raw}`;
+    const res = await fetch(url, {
+      ...init,
+      signal: ctrl.signal,
+      headers: {
+        "User-Agent": UA,
+        Accept: "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        ...(init.headers || {}),
+      },
+    });
+    const text = await res.text();
+    return { ok: res.ok, status: res.status, text };
   } catch {
-    return raw;
+    return { ok: false, status: 0, text: "" };
+  } finally {
+    clearTimeout(t);
   }
 }
 
-async function searchWikipedia(query: string): Promise<SearchHit[]> {
+function decodeBingRedirect(href: string): string | null {
   try {
-    const url = `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=6&namespace=0&format=json`;
-    const res = await fetch(url, { headers: { "User-Agent": UA } });
-    if (!res.ok) return [];
-    const data = (await res.json()) as [string, string[], string[], string[]];
+    const u = new URL(href.replace(/&amp;/g, "&"));
+    const raw = u.searchParams.get("u");
+    if (raw?.startsWith("a1")) {
+      return Buffer.from(raw.slice(2), "base64").toString("utf8");
+    }
+    if (href.startsWith("http") && !/bing\.com/i.test(href)) return href;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** Wikipedia opensearch + page summaries */
+async function searchWikipediaOpen(query: string): Promise<SearchHit[]> {
+  const res = await fetchText(
+    `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=6&namespace=0&format=json`,
+  );
+  if (!res.ok) return [];
+  try {
+    const data = JSON.parse(res.text) as [string, string[], string[], string[]];
     const titles = data[1] || [];
     const links = data[3] || [];
-
     const hits: SearchHit[] = [];
     await Promise.all(
-      titles.map(async (title, i) => {
+      titles.slice(0, 5).map(async (title, i) => {
         const link =
           links[i] ||
           `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
         let snippet = title;
-        try {
-          const sumRes = await fetch(
-            `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, "_"))}`,
-            { headers: { "User-Agent": UA } },
-          );
-          if (sumRes.ok) {
-            const sum = (await sumRes.json()) as { extract?: string };
-            if (sum.extract) snippet = sum.extract.slice(0, 400);
+        const sum = await fetchText(
+          `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, "_"))}`,
+          {},
+          3000,
+        );
+        if (sum.ok) {
+          try {
+            const j = JSON.parse(sum.text) as { extract?: string };
+            if (j.extract) snippet = j.extract.slice(0, 400);
+          } catch {
+            /* ignore */
           }
-        } catch {
-          /* ignore */
         }
         hits.push({
           title,
@@ -130,17 +180,129 @@ async function searchWikipedia(query: string): Promise<SearchHit[]> {
   }
 }
 
-async function searchDuckInstant(query: string): Promise<SearchHit[]> {
+/** Wikipedia full-text search with snippets (more recall). */
+async function searchWikipediaQuery(query: string): Promise<SearchHit[]> {
+  const res = await fetchText(
+    `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=8&utf8=&format=json`,
+  );
+  if (!res.ok) return [];
   try {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-    const res = await fetch(url, { headers: { "User-Agent": UA } });
-    if (!res.ok) return [];
-    const data = (await res.json()) as {
+    const data = JSON.parse(res.text) as {
+      query?: { search?: Array<{ title: string; snippet: string }> };
+    };
+    return (data.query?.search || []).map((row) => ({
+      title: row.title,
+      url: `https://en.wikipedia.org/wiki/${encodeURIComponent(row.title.replace(/ /g, "_"))}`,
+      snippet: stripHtml(row.snippet).slice(0, 400),
+      publisher: "wikipedia.org",
+      quality: 0.8,
+      kind: "research" as const,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Bing HTML scrape — works when DuckDuckGo is blocked/timing out. */
+async function searchBing(query: string): Promise<SearchHit[]> {
+  const res = await fetchText(
+    `https://www.bing.com/search?q=${encodeURIComponent(query)}&cc=us&setlang=en-US&ensearch=1`,
+    { headers: { Accept: "text/html" } },
+    5000,
+  );
+  if (!res.ok || !res.text) return [];
+  const hits: SearchHit[] = [];
+  const seen = new Set<string>();
+  const blocks = res.text.match(/<li class="b_algo"[\s\S]*?<\/li>/g) || [];
+  for (const block of blocks) {
+    if (hits.length >= 12) break;
+    const a = block.match(
+      /<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i,
+    );
+    if (!a) continue;
+    const title = stripHtml(a[2]);
+    const decoded = decodeBingRedirect(a[1]);
+    if (!decoded || !/^https?:\/\//i.test(decoded)) continue;
+    const cleanUrl = decoded
+      .replace(/([?&])msockid=[^&]+/g, "")
+      .replace(/[?&]$/, "");
+    if (
+      seen.has(cleanUrl) ||
+      /bing\.com|microsoft\.com\/en-us\/bing/i.test(cleanUrl)
+    )
+      continue;
+    seen.add(cleanUrl);
+    const snipMatch =
+      block.match(/<p class="b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/i) ||
+      block.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+    const snippet = stripHtml(snipMatch?.[1] || title).slice(0, 400);
+    const scored = scoreSource(cleanUrl, title);
+    hits.push({
+      title: title.slice(0, 160),
+      url: cleanUrl,
+      snippet,
+      publisher: scored.publisher,
+      quality: scored.quality,
+      kind: scored.kind,
+    });
+  }
+  return hits;
+}
+
+/** Public SearXNG JSON instances (best-effort free meta-search). */
+async function searchSearx(query: string): Promise<SearchHit[]> {
+  const endpoints = [
+    `https://searx.be/search?q=${encodeURIComponent(query)}&format=json&language=en`,
+    `https://search.sapti.me/search?q=${encodeURIComponent(query)}&format=json&language=en`,
+  ];
+  for (const endpoint of endpoints) {
+    const res = await fetchText(endpoint, { headers: { Accept: "application/json" } }, 4000);
+    if (!res.ok) continue;
+    try {
+      const data = JSON.parse(res.text) as {
+        results?: Array<{ title?: string; url?: string; content?: string }>;
+      };
+      const hits: SearchHit[] = [];
+      for (const row of data.results || []) {
+        if (!row.url || !row.title || !/^https?:\/\//i.test(row.url)) continue;
+        if (/searx|duckduckgo\.com\/y\.js/i.test(row.url)) continue;
+        const scored = scoreSource(row.url, row.title);
+        hits.push({
+          title: row.title.slice(0, 160),
+          url: row.url,
+          snippet: (row.content || row.title).slice(0, 400),
+          publisher: scored.publisher,
+          quality: Math.max(scored.quality, 0.55),
+          kind: scored.kind,
+        });
+        if (hits.length >= 10) break;
+      }
+      if (hits.length) return hits;
+    } catch {
+      /* try next */
+    }
+  }
+  return [];
+}
+
+/** Short-timeout DDG instant — often dead from cloud IPs; never block the swarm. */
+async function searchDuckInstant(query: string): Promise<SearchHit[]> {
+  const res = await fetchText(
+    `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+    {},
+    2500,
+  );
+  if (!res.ok) return [];
+  try {
+    const data = JSON.parse(res.text) as {
       Heading?: string;
       Abstract?: string;
       AbstractURL?: string;
       AbstractSource?: string;
-      RelatedTopics?: Array<{ Text?: string; FirstURL?: string } | { Topics?: Array<{ Text?: string; FirstURL?: string }> }>;
+      RelatedTopics?: Array<
+        | { Text?: string; FirstURL?: string }
+        | { Topics?: Array<{ Text?: string; FirstURL?: string }> }
+      >;
     };
     const hits: SearchHit[] = [];
     if (data.Abstract && data.AbstractURL) {
@@ -154,8 +316,7 @@ async function searchDuckInstant(query: string): Promise<SearchHit[]> {
         kind: scored.kind,
       });
     }
-    const topics = data.RelatedTopics || [];
-    for (const t of topics) {
+    for (const t of data.RelatedTopics || []) {
       if ("FirstURL" in t && t.FirstURL && t.Text) {
         const scored = scoreSource(t.FirstURL, t.Text);
         hits.push({
@@ -187,72 +348,17 @@ async function searchDuckInstant(query: string): Promise<SearchHit[]> {
   }
 }
 
-async function searchDuckLite(query: string): Promise<SearchHit[]> {
-  try {
-    const res = await fetch(
-      `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
-      { headers: { "User-Agent": UA, Accept: "text/html" } },
-    );
-    if (!res.ok) return [];
-    const html = await res.text();
-    const hits: SearchHit[] = [];
-
-    // lite results: <a rel="nofollow" href="...">title</a> near snippets
-    const linkRe =
-      /<a[^>]+rel="nofollow"[^>]+href="([^"]+)"[^>]*>([^<]+)<\/a>/gi;
-    let m: RegExpExecArray | null;
-    const seen = new Set<string>();
-    while ((m = linkRe.exec(html)) && hits.length < 12) {
-      const href = decodeDuckUrl(m[1]);
-      const title = m[2].replace(/\s+/g, " ").trim();
-      if (!href.startsWith("http") || seen.has(href)) continue;
-      if (/duckduckgo\.com/i.test(href)) continue;
-      seen.add(href);
-      const scored = scoreSource(href, title);
-      hits.push({
-        title,
-        url: href,
-        snippet: title,
-        publisher: scored.publisher,
-        quality: scored.quality,
-        kind: scored.kind,
-      });
-    }
-    return hits;
-  } catch {
-    return [];
-  }
-}
-
-async function searchDuckScrape(_query: string): Promise<SearchHit[]> {
-  // duck-duck-scrape is frequently rate-limited; keep as no-op fallback.
-  return [];
-}
-
-/** Free multi-source web search ranked by source quality. */
-export async function freeWebSearch(
-  query: string,
-  limit = 12,
-): Promise<SearchHit[]> {
-  const [wiki, instant, lite] = await Promise.all([
-    searchWikipedia(query),
-    searchDuckInstant(query),
-    searchDuckLite(query),
-  ]);
-
-  // Optional scrape — often rate-limited; never block the swarm on it.
-  const scraped = await searchDuckScrape(query);
-
-  const merged = [...wiki, ...instant, ...lite, ...scraped];
+function mergeHits(groups: SearchHit[][]): SearchHit[] {
   const byUrl = new Map<string, SearchHit>();
-  for (const hit of merged) {
-    if (!hit.url) continue;
-    const prev = byUrl.get(hit.url);
+  for (const hit of groups.flat()) {
+    if (!hit.url || !/^https?:\/\//i.test(hit.url)) continue;
+    const key = hit.url.replace(/\/$/, "").toLowerCase();
+    const prev = byUrl.get(key);
     if (!prev) {
-      byUrl.set(hit.url, hit);
+      byUrl.set(key, hit);
       continue;
     }
-    byUrl.set(hit.url, {
+    byUrl.set(key, {
       ...prev,
       title: hit.title.length > prev.title.length ? hit.title : prev.title,
       snippet:
@@ -262,10 +368,31 @@ export async function freeWebSearch(
       publisher: hit.quality >= prev.quality ? hit.publisher : prev.publisher,
     });
   }
+  return [...byUrl.values()].sort((a, b) => b.quality - a.quality);
+}
 
-  return [...byUrl.values()]
-    .sort((a, b) => b.quality - a.quality)
-    .slice(0, limit);
+/** Free multi-source web search ranked by source quality. */
+export async function freeWebSearch(
+  query: string,
+  limit = 12,
+): Promise<SearchHit[]> {
+  const q = query.trim().slice(0, 180);
+  if (!q) return [];
+
+  // Run reliable sources in parallel; never let one hung provider stall the swarm.
+  const settled = await Promise.allSettled([
+    searchBing(q),
+    searchWikipediaOpen(q),
+    searchWikipediaQuery(q),
+    searchSearx(q),
+    searchDuckInstant(q),
+  ]);
+
+  const groups = settled.map((r) =>
+    r.status === "fulfilled" ? r.value : [],
+  );
+
+  return mergeHits(groups).slice(0, limit);
 }
 
 export function formatSearchBrief(hits: SearchHit[]): string {
