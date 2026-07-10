@@ -21,8 +21,8 @@ import { formatSearchBrief, freeWebSearch, scoreSource } from "../websearch";
 import type { EntityType, ResearchTask } from "../types";
 
 /** Parallel OpenRouter Hy3 workers. Queue can grow without bound (capped). */
-const DEFAULT_CONCURRENCY = 32;
-const MAX_CONCURRENCY_CAP = 128;
+const DEFAULT_CONCURRENCY = 1000;
+const MAX_CONCURRENCY_CAP = 1000;
 const MAX_QUEUE = 5_000_000;
 const MAX_DEPTH = 128;
 const FOLLOWUPS_PER_AGENT = 20;

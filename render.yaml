@@ -32,7 +32,9 @@ services:
       - key: OPENROUTER_WEB_SEARCH
         value: "true"
       - key: SWARM_MAX_CONCURRENT
-        value: "32"
+        value: "1000"
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=460"
       - key: SWARM_MIN_RUNTIME_MS
         value: "3600000"
       - key: NEXT_PUBLIC_APP_URL
