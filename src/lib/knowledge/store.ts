@@ -58,7 +58,10 @@ export function normalizeSourceKind(raw: unknown): SourceKind {
 
 type GlobalSwarm = {
   sessions: Map<string, KnowledgeSession>;
-  runners: Map<string, { stop: () => void }>;
+  runners: Map<
+    string,
+    { stop: () => void; deepDive?: (name: string) => number }
+  >;
 };
 
 function getGlobal(): GlobalSwarm {
@@ -81,7 +84,10 @@ export function registerSession(session: KnowledgeSession) {
   getGlobal().sessions.set(session.id, session);
 }
 
-export function registerRunner(id: string, runner: { stop: () => void }) {
+export function registerRunner(
+  id: string,
+  runner: { stop: () => void; deepDive?: (name: string) => number },
+) {
   getGlobal().runners.set(id, runner);
 }
 

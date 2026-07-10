@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSwarm } from "@/hooks/useSwarm";
 import { AgentBoard } from "@/components/AgentBoard";
@@ -11,13 +11,13 @@ import { Sidebar } from "@/components/Sidebar";
 import { StatsBar } from "@/components/StatsBar";
 import { Tape } from "@/components/Tape";
 
-type View = "map" | "agents" | "page" | "search";
+type View = "map" | "dive" | "agents" | "search";
 
 const NAV: Array<{ id: View; label: string; hint: string }> = [
-  { id: "map", label: "Map", hint: "Visual network" },
-  { id: "agents", label: "Agents", hint: "Live work" },
-  { id: "page", label: "Page", hint: "Entity detail" },
-  { id: "search", label: "Search", hint: "Find anything" },
+  { id: "map", label: "1) Rel Map", hint: "Hub & spokes" },
+  { id: "dive", label: "2) Deep Dive", hint: "FA desk" },
+  { id: "agents", label: "3) Agents", hint: "Live work" },
+  { id: "search", label: "4) Search", hint: "Find anything" },
 ];
 
 export function Workspace({ sessionId }: { sessionId: string }) {
@@ -31,12 +31,15 @@ export function Workspace({ sessionId }: { sessionId: string }) {
     stats,
     connected,
     stop,
+    deepDive,
     error,
   } = useSwarm(sessionId);
   const [selectedEntityId, setSelectedEntityId] = useState<string>();
   const [selectedAgentId, setSelectedAgentId] = useState<string>();
   const [view, setView] = useState<View>("map");
   const [tapeOpen, setTapeOpen] = useState(true);
+  const [diving, setDiving] = useState(false);
+  const [diveMsg, setDiveMsg] = useState<string | null>(null);
 
   const selectedEntity = useMemo(
     () => entities.find((e) => e.id === selectedEntityId),
@@ -57,8 +60,33 @@ export function Workspace({ sessionId }: { sessionId: string }) {
     if (!selectedAgentId && live) setSelectedAgentId(live.id);
   }, [tasks, selectedAgentId]);
 
+  const openDive = useCallback(
+    async (id: string, spawn = true) => {
+      setSelectedEntityId(id);
+      setView("dive");
+      if (!spawn) return;
+      const ent = entities.find((e) => e.id === id);
+      if (!ent) return;
+      setDiving(true);
+      setDiveMsg(null);
+      try {
+        const res = await deepDive(id, ent.name);
+        setDiveMsg(
+          res.spawned > 0
+            ? `Deep dive · ${res.name} · +${res.spawned} agents queued`
+            : `Deep dive · ${res.name} · dossier already running`,
+        );
+      } catch (err) {
+        setDiveMsg(err instanceof Error ? err.message : "Deep dive failed");
+      } finally {
+        setDiving(false);
+      }
+    },
+    [deepDive, entities],
+  );
+
   return (
-    <div className="workspace">
+    <div className="workspace bb-terminal">
       <StatsBar
         company={session?.company || "…"}
         task={session?.task || "…"}
@@ -69,9 +97,11 @@ export function Workspace({ sessionId }: { sessionId: string }) {
           router.push("/");
         }}
       />
-      {error && <div className="banner">{error}</div>}
+      {(error || diveMsg) && (
+        <div className="banner">{diveMsg || error}</div>
+      )}
 
-      <nav className="view-tabs" aria-label="Workspace">
+      <nav className="view-tabs bb-view-tabs" aria-label="Workspace">
         <a href="/" className="tab-home">
           Home
         </a>
@@ -102,12 +132,9 @@ export function Workspace({ sessionId }: { sessionId: string }) {
         <Sidebar
           entities={entities}
           selectedId={selectedEntityId}
-          onSelect={(id) => {
-            setSelectedEntityId(id);
-            setView("page");
-          }}
+          onSelect={(id) => void openDive(id, true)}
           view={view === "map" ? "map" : "page"}
-          onViewChange={(v) => setView(v === "map" ? "map" : "page")}
+          onViewChange={(v) => setView(v === "map" ? "map" : "dive")}
         />
 
         <main className="main-pane" key={view}>
@@ -116,10 +143,9 @@ export function Workspace({ sessionId }: { sessionId: string }) {
               entities={entities}
               relations={relations}
               selectedId={selectedEntityId}
-              onSelect={(id) => {
-                setSelectedEntityId(id);
-                setView("page");
-              }}
+              rootCompany={session?.company || ""}
+              onSelect={(id) => void openDive(id, true)}
+              onDeepDive={(id) => void openDive(id, true)}
             />
           )}
           {view === "agents" && (
@@ -129,26 +155,25 @@ export function Workspace({ sessionId }: { sessionId: string }) {
               onSelect={setSelectedAgentId}
             />
           )}
-          {view === "page" && (
+          {view === "dive" && (
             <EntityView
               entity={selectedEntity}
               relations={relations}
               entities={entities}
-              onSelect={setSelectedEntityId}
+              diving={diving}
+              onSelect={(id) => void openDive(id, true)}
+              onDeepDive={(id) => void openDive(id, true)}
             />
           )}
           {view === "search" && (
             <div className="search-pane">
               <div className="pane-intro">
-                <h2>Search repository</h2>
-                <p>Find companies, products, people, and sources already mapped.</p>
+                <h2>4) Search repository</h2>
+                <p>Find companies, products, people, and sources — click to dive.</p>
               </div>
               <RepoSearch
                 sessionId={sessionId}
-                onSelect={(e) => {
-                  setSelectedEntityId(e.id);
-                  setView("page");
-                }}
+                onSelect={(e) => void openDive(e.id, true)}
               />
             </div>
           )}

@@ -1,6 +1,7 @@
 import { chatCompletion, parseAgentFinding, HY3_MODEL } from "../openrouter";
 import {
   getRunner,
+  getSession,
   KnowledgeSession,
   registerRunner,
   registerSession,
@@ -115,9 +116,11 @@ export function startSwarm(company: string, task: string) {
     name: string,
     parentId: string,
     depth: number,
+    force = false,
   ) => {
     const key = normKey(name);
-    if (!key || deepDivied.has(key)) return 0;
+    if (!key) return 0;
+    if (!force && deepDivied.has(key)) return 0;
     if (session.getStats().queued >= MAX_QUEUE - 100) return 0;
     deepDivied.add(key);
     let n = 0;
@@ -128,7 +131,7 @@ export function startSwarm(company: string, task: string) {
         depth: depth + 1,
         entityHint: seed.entityHint,
         entityTypeHint: seed.entityTypeHint,
-        priority: seed.priority,
+        priority: force ? Math.min(10, seed.priority + 1) : seed.priority,
         searchQuery: seed.searchQuery,
       });
       n += 1;
@@ -136,7 +139,7 @@ export function startSwarm(company: string, task: string) {
     session.log(
       "spawn",
       parentId,
-      `DOSSIER · ${name} · +${n} specialist Hy3 agents`,
+      `DOSSIER · ${name} · +${n} specialist Hy3 agents${force ? " · forced" : ""}`,
       { company: name },
     );
     return n;
@@ -177,11 +180,29 @@ export function startSwarm(company: string, task: string) {
       session.setStatus("stopped");
       session.log("system", "orchestrator", "Open swarm halted.");
     },
+    deepDive: (name: string) =>
+      spawnCompanyDossier(name, "ui-deepdive", 1, true),
   };
 
   registerRunner(session.id, runner);
   pump();
   return session;
+}
+
+export function deepDiveEntity(sessionId: string, name: string) {
+  const runner = getRunner(sessionId);
+  if (!runner?.deepDive) {
+    throw new Error("Live swarm not available for deep dive");
+  }
+  const spawned = runner.deepDive(name);
+  const session = getSession(sessionId);
+  session?.log(
+    "spawn",
+    "ui-deepdive",
+    `CLICK DEEP DIVE · ${name} · +${spawned} specialist agents`,
+    { company: name, spawned },
+  );
+  return { spawned, name };
 }
 
 function maybeReplenish(

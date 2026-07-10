@@ -154,12 +154,32 @@ export function useSwarm(sessionId?: string) {
     });
   }, [session?.id]);
 
+  const deepDive = useCallback(
+    async (entityId: string, entityName?: string) => {
+      if (!session?.id) throw new Error("No live session");
+      const res = await fetch("/api/research/deepdive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: session.id,
+          entityId,
+          entityName,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Deep dive failed");
+      return data as { spawned: number; name: string };
+    },
+    [session?.id],
+  );
+
   return {
     session,
     connected,
     error,
     start,
     stop,
+    deepDive,
     entities: (session?.entities || []) as Entity[],
     relations: (session?.relations || []) as Relation[],
     logs: (session?.logs || []) as LogEntry[],

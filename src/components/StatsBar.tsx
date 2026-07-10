@@ -26,11 +26,11 @@ export function StatsBar({
   onStop: () => void;
 }) {
   return (
-    <header className="topbar">
+    <header className="topbar bb-topbar">
       <div className="brand-block">
         <div className="brand">Track the Web</div>
         <div className="mission">
-          <strong>{company}</strong>
+          <strong className="bb-equity">{company}</strong>
           <span title={task}>{task}</span>
         </div>
       </div>
@@ -49,6 +49,10 @@ export function StatsBar({
           <strong>{stats?.entities ?? 0}</strong>
         </div>
         <div>
+          <em>Links</em>
+          <strong>{stats?.relations ?? 0}</strong>
+        </div>
+        <div>
           <em>Sources</em>
           <strong>{stats?.sources ?? 0}</strong>
         </div>
@@ -59,13 +63,13 @@ export function StatsBar({
         <div>
           <em>Feed</em>
           <strong className={connected ? "ok" : "bad"}>
-            {connected ? "Live" : "Reconnecting"}
+            {connected ? "LIVE" : "OFF"}
           </strong>
         </div>
       </div>
 
       <button type="button" className="stop-btn" onClick={onStop}>
-        Stop
+        98) Stop
       </button>
     </header>
   );
