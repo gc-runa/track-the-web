@@ -37,6 +37,14 @@ export async function markAllSessionsStopped() {
   );
   return res.rowCount || 0;
 }
+
+export async function persistSessionMeta(input: {
+  id: string;
+  company: string;
+  task: string;
+  stats: SwarmStats;
+  userId?: string;
+}) {
   if (!hasDatabase()) return;
   await ensureSchema();
   const p = getPool()!;
