@@ -8,13 +8,35 @@ import type {
 } from "./types";
 import { ensureSchema, getPool, hasDatabase } from "./db";
 
-export async function persistSessionMeta(input: {
-  id: string;
-  company: string;
-  task: string;
-  stats: SwarmStats;
-  userId?: string;
-}) {
+export async function markSessionStopped(sessionId: string) {
+  if (!hasDatabase()) return;
+  await ensureSchema();
+  const p = getPool()!;
+  await p.query(
+    `UPDATE sessions
+     SET status = 'stopped',
+         stats = jsonb_set(COALESCE(stats, '{}'::jsonb), '{status}', '"stopped"'),
+         updated_at = NOW()
+     WHERE id = $1`,
+    [sessionId],
+  );
+}
+
+export async function markAllSessionsStopped() {
+  if (!hasDatabase()) return 0;
+  await ensureSchema();
+  const p = getPool()!;
+  const res = await p.query(
+    `UPDATE sessions
+     SET status = 'stopped',
+         stats = jsonb_set(COALESCE(stats, '{}'::jsonb), '{status}', '"stopped"'),
+         updated_at = NOW()
+     WHERE status IS DISTINCT FROM 'stopped'
+        OR COALESCE(stats->>'status', '') = 'running'
+     RETURNING id`,
+  );
+  return res.rowCount || 0;
+}
   if (!hasDatabase()) return;
   await ensureSchema();
   const p = getPool()!;
